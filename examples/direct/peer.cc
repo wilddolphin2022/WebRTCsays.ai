@@ -130,8 +130,8 @@ void DirectPeer::Start() {
     std::vector<cricket::RelayServerConfig> turn_servers;
 
     webrtc::PeerConnectionInterface::IceServer stun_server;
-    //stun_server.uri = "stun:stun.l.google.com:19302";
-    stun_server.uri = "stun:192.168.8.179:3478";
+    stun_server.uri = "stun:stun.l.google.com:19302";
+    stun_server.uri = "stun:192.168.100.4:3478";
     config.servers.push_back(stun_server);
 
     for (const auto& server : config.servers) {
