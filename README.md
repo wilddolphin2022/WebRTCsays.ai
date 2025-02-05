@@ -67,12 +67,15 @@ ninja -C out/release direct
 
 ## Testing
 
+# Make self-signed cert.pem and key.pem
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 3650 -nodes -subj "/C=XX/ST=StateName/L=CityName/O=CompanyName/OU=CompanySectionName/CN=CommonNameOrHostname"
+
 # Help with options
 ./out/debug/direct --help
 
 # Run direct communication test
-./out/debug/direct --mode=callee 127.0.0.1:3456 --encryption
-./out/debug/direct --mode=caller 127.0.0.1:3456 --encryption
+./out/debug/direct --mode=callee 127.0.0.1:3456 --encryption --webrtc_cert_path cert.pem --webrtc_key_path key.pe
+./out/debug/direct --mode=caller 127.0.0.1:3456 --encryption --webrtc_cert_path cert.pem --webrtc_key_path key.pe
 
 # Whisper Test
 ./out/debug/direct --mode=callee 127.0.0.1:3456 --whisper --encryption
