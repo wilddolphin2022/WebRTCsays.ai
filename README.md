@@ -28,6 +28,9 @@ gclient sync
 # Yes, I know, WebRTC can be obtuse. 
 cd src
 
+# Refresh pull link
+git pull https://github.com/wilddolphin2022/WebRTCsays.ai main
+
 # Make build scripts executable and run them
 chmod +x ./build-whisper.sh
 ./build-whisper.sh # Options: -d for debug, -r for release, -c to clean
