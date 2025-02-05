@@ -1,32 +1,65 @@
-**WebRTC is a free, open software project** that provides browsers and mobile
-applications with Real-Time Communications (RTC) capabilities via simple APIs.
-The WebRTC components have been optimized to best serve this purpose.
+# Building WebRTCsays.ai
 
-**Our mission:** To enable rich, high-quality RTC applications to be
-developed for the browser, mobile platforms, and IoT devices, and allow them
-all to communicate via a common set of protocols.
+## Setup Environment
 
-The WebRTC initiative is a project supported by Google, Mozilla and Opera,
-amongst others.
+```bash
+# Add depot_tools to your PATH
+export PATH=~/depot_tools:$PATH
 
-### Development
+# Configure and sync [gclient](https://x.com/i/grok?text=gclient)
+gclient config https://github.com/wilddolphin2022/webrtcsays.ai.git
+gclient sync
 
-See [here][native-dev] for instructions on how to get started
-developing with the native code.
+# Build Scripts
 
-[Authoritative list](native-api.md) of directories that contain the
-native API header files.
+# Make build scripts executable and run them
+chmod +x scripts/build.sh
+./scripts/build.sh
+./scripts/build-whisper.sh # Options: -d for debug, -r for release, -c to clean
 
-### More info
+# Navigate to the source directory
+cd src
 
- * Official web site: http://www.webrtc.org
- * Master source code repo: https://webrtc.googlesource.com/src
- * Samples and reference apps: https://github.com/webrtc
- * Mailing list: http://groups.google.com/group/discuss-webrtc
- * Continuous build: https://ci.chromium.org/p/webrtc/g/ci/console
- * [Coding style guide](g3doc/style-guide.md)
- * [Code of conduct](CODE_OF_CONDUCT.md)
- * [Reporting bugs](docs/bug-reporting.md)
- * [Documentation](g3doc/sitemap.md)
+# For WebRTCsays.ai project, by default, we use "speech" enabled audio.
+# Set to false to disable.
+rtc_use_speech_audio_devices = true
 
-[native-dev]: https://webrtc.googlesource.com/src/+/main/docs/native-code/
+# macOS Deployment Target
+
+# Check and set macOS deployment target for compatibility with Whisper and LLaMA
+# which demand macOS 14.0 minimum
+grep mac_deployment_target src/build/config/mac/mac_sdk.gni
+
+# Update deployment target if necessary
+perl -i -pe's/mac_deployment_target = "11.0"/mac_deployment_target = "14.0"/g' build/config/mac/mac_sdk.gni
+
+# Audio Device Module
+
+# Modify audio device module for macOS
+perl -i -pe's/Master/Main/g' modules/audio_device/mac/audio_device_mac.cc
+
+# Generate WebRTC example "direct"
+gn gen out/debug --args="is_debug=true rtc_include_opus = true rtc_build_examples = true"
+
+# Debug build
+ninja -C out/debug direct
+
+# Release build
+gn gen out/release --args="is_debug=false rtc_include_opus = true rtc_build_examples = true"
+ninja -C out/release direct
+
+## Testing
+
+# Help with options
+./out/debug/direct --help
+
+# Run direct communication test
+./out/debug/direct --mode=callee 127.0.0.1:3456 --encryption
+./out/debug/direct --mode=caller 127.0.0.1:3456 --encryption
+
+# Whisper Test
+./out/debug/direct --mode=callee 127.0.0.1:3456 --whisper --encryption
+./out/debug/direct --mode=caller 127.0.0.1:3456 --whisper --encryption
+
+
+```
