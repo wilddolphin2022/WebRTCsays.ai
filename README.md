@@ -7,21 +7,33 @@
 export PATH=~/depot_tools:$PATH
 
 # Configure and sync [gclient](https://x.com/i/grok?text=gclient)
+# .gclient in original folder should be like this
+# solutions = [
+#  {
+#    "name": "src",
+#    "url": "https://github.com/wilddolphin2022/WebRTCsays.ai",
+#    "deps_file": "DEPS",
+#    "managed": False,
+#    "custom_deps": {},
+#  },
+#]
+#target_os = ["ios", "mac", "linux"]
+
 gclient config https://github.com/wilddolphin2022/webrtcsays.ai.git
 gclient sync
 
 # Build Scripts
 
-# Make build scripts executable and run them
-chmod +x scripts/build.sh
-./scripts/build.sh
-./scripts/build-whisper.sh # Options: -d for debug, -r for release, -c to clean
-
-# Navigate to the source directory
+# Navigate to the source directory. Original directory can be cleaned up leave "src"
+# Yes, I know, WebRTC can be obtuse. 
 cd src
 
+# Make build scripts executable and run them
+chmod +x ./build-whisper.sh
+./build-whisper.sh # Options: -d for debug, -r for release, -c to clean
+
 # For WebRTCsays.ai project, by default, we use "speech" enabled audio.
-# Set to false to disable.
+# Set to false to disable in file webrtc.gni
 rtc_use_speech_audio_devices = true
 
 # macOS Deployment Target
@@ -35,7 +47,7 @@ perl -i -pe's/mac_deployment_target = "11.0"/mac_deployment_target = "14.0"/g' b
 
 # Audio Device Module
 
-# Modify audio device module for macOS
+# Modify audio device module for macOS if not yet
 perl -i -pe's/Master/Main/g' modules/audio_device/mac/audio_device_mac.cc
 
 # Generate WebRTC example "direct"
