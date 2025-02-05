@@ -892,4 +892,131 @@ if (!build_with_chromium) {
       deps += [ "../rtc_base:win32_socket_init" ]
     }
   }
+
+  rtc_executable("direct") {
+    testonly = true
+    defines = []
+    include_dirs = []
+    sources = [
+      "direct/direct.h",
+      "direct/utils.h",
+      "direct/direct.cc",
+      "direct/caller.cc",
+      "direct/callee.cc",
+      "direct/peer.cc",
+      "direct/utils.cc",
+    ]
+
+    cflags = [ "-g", "-O0" ]
+    include_dirs += [ "../third_party/boringssl/src/include" ]
+
+    if (rtc_use_speech_audio_devices) {
+      defines += [ "WEBRTC_SPEECH_DEVICES" ]
+      include_dirs += [ "../modules/third_party/espeak-ng/src/include" ]
+    }
+
+    deps = [
+      "../api:async_dns_resolver",
+      "../api:audio_options_api",
+      "../api:create_peerconnection_factory",
+      "../api:libjingle_peerconnection_api",
+      "../api:media_stream_interface",
+      "../api:rtp_sender_interface",
+      "../api:scoped_refptr",
+      "../api/audio:audio_device",
+      "../api/audio:audio_mixer_api",
+      "../api/audio:audio_processing",
+      "../api/audio_codecs:audio_codecs_api",
+      "../api/audio_codecs:builtin_audio_decoder_factory",
+      "../api/audio_codecs:builtin_audio_encoder_factory",
+      "../api/video_codecs:video_decoder_factory_template",
+      "../api/video_codecs:video_decoder_factory_template_dav1d_adapter",
+      "../api/video_codecs:video_decoder_factory_template_libvpx_vp8_adapter",
+      "../api/video_codecs:video_decoder_factory_template_libvpx_vp9_adapter",
+      "../api/video_codecs:video_decoder_factory_template_open_h264_adapter",
+      "../api/video_codecs:video_encoder_factory_template",
+      "../api/video_codecs:video_encoder_factory_template_libaom_av1_adapter",
+      "../api/video_codecs:video_encoder_factory_template_libvpx_vp8_adapter",
+      "../api/video_codecs:video_encoder_factory_template_libvpx_vp9_adapter",
+      "../api/video_codecs:video_encoder_factory_template_open_h264_adapter",
+      "../api/task_queue:pending_task_safety_flag",
+      "../api/units:time_delta",
+      "../api/video:video_frame",
+      "../api/video:video_rtp_headers",
+      "../api/video_codecs:video_codecs_api",
+      "../media:media_channel",
+      "../media:video_common",
+      "../p2p:connection",
+      "../p2p:port_allocator",
+      "../pc:video_track_source",
+      "../rtc_base:async_dns_resolver",
+      "../rtc_base:checks",
+      "../rtc_base:logging",
+      "../rtc_base:macromagic",
+      "../rtc_base:net_helpers",
+      "../rtc_base:socket_server",
+      "../rtc_base:socket_address_pair",
+      "../rtc_base:refcount",
+      "../rtc_base:rtc_certificate_generator",
+      "../rtc_base:ssl_adapter",
+      "../rtc_base:stringutils",
+      "../rtc_base:threading",
+      "../rtc_base/third_party/sigslot",
+      "../system_wrappers:field_trial",
+      "../test:field_trial",
+      "../test:platform_video_capturer",
+      "../test:rtp_test_utils",
+      "//third_party/abseil-cpp/absl/memory",
+    ]
+ 
+    # WebRTCsays.ai stuff
+    if(rtc_use_speech_audio_devices) {
+      lib_dirs = [
+        "../../src/modules/third_party/whisper.cpp/build/src",
+        "../../src/modules/third_party/llama.cpp/build/src",
+        "../../src/modules/third_party/llama.cpp/build/ggml/src",
+        "../../src/modules/third_party/espeak-ng/build/src/libespeak-ng",
+        "../../src/modules/third_party/espeak-ng/build/src/speechPlayer",
+        "../../src/modules/third_party/espeak-ng/build/src/ucd-tools",
+        "../../src/modules/third_party/espeak-ng/build/src/ucd-tools",
+        "../../src/modules/third_party/pcaudiolib/src",
+      ]
+      
+      libs = [
+        "whisper",
+        "llama",
+        "ggml",
+        "ggml-base",
+        "ggml-cpu",
+        "espeak-ng",
+        "speechPlayer",
+        "ucd",
+        "pcaudio"
+      ]
+      if(is_linux) {
+        libs += [
+          "stdc++",
+          "gcc_s"
+        ]
+        lib_dirs += ["/usr/lib/x86_64-linux-gnu"]
+        ldflags = [
+          "-Wl,--allow-shlib-undefined",
+        ]
+      }
+      else if(is_mac) {
+        frameworks = [ "CoreAudio.framework" ]
+        ldflags = [
+          # Add rpaths for external libraries. Assuming webrtc_direct built in src/webrtc/src/out/<debug|release>
+          "-Wl,-rpath,@loader_path/../../modules/third_party/whisper.cpp/build/src",  # Relative to the executable
+          "-Wl,-rpath,@loader_path/../../modules/third_party/whisper.cpp/build/ggml/src",  # Relative to the executable
+          "-Wl,-rpath,@loader_path/../../modules/third_party/llama.cpp/build/src",  # Relative to the executable
+          "-Wl,-rpath,@loader_path/../../modules/third_party/llama.cpp/build/ggml/src",  # Relative to the executable
+          "-Wl,-rpath,@loader_path/../../modules/third_party/pcaudiolib/src",  # Relative to the executable
+        ]
+      }    
+    } 
+    
+    configs += []
+  }
+
 }

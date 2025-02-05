@@ -35,6 +35,7 @@ class AudioDeviceModule : public webrtc::RefCountInterface {
     kAndroidAAudioAudio,
     kAndroidJavaInputAndAAudioOutputAudio,
     kDummyAudio,
+    kSpeechAudio
   };
 
   enum WindowsDeviceType {

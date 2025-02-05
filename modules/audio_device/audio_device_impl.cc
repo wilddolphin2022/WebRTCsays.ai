@@ -46,6 +46,10 @@
 #endif
 #include "modules/audio_device/dummy/audio_device_dummy.h"
 
+#if defined(WEBRTC_SPEECH_DEVICES) 
+#include "modules/audio_device/speech/speech_audio_device_factory.h"
+#endif
+
 #define CHECKinitialized_() \
   {                         \
     if (!initialized_) {    \
@@ -189,6 +193,16 @@ int32_t AudioDeviceModuleImpl::CreatePlatformSpecificObjects() {
 // Real (non-dummy) ADM implementations.
 #else
   AudioLayer audio_layer(PlatformAudioLayer());
+
+#if defined(WEBRTC_SPEECH_DEVICES) 
+ // Speech ADM implementation.
+  if (audio_layer == kSpeechAudio) {
+    audio_device_.reset(SpeechAudioDeviceFactory::CreateSpeechAudioDevice(nullptr));
+    RTC_LOG(LS_INFO) << "Whisper Audio Device is on";
+    return 0;
+  }
+#endif // if defined WEBRTC_SPEECH_DEVICES
+
 // Windows ADM implementation.
 #if defined(WEBRTC_WINDOWS_CORE_AUDIO_BUILD)
   if ((audio_layer == kWindowsCoreAudio) ||

@@ -200,6 +200,10 @@ declare_args() {
   # use file-based audio playout and record.
   rtc_use_dummy_audio_file_devices = false
 
+  # For WebRTCsays.ai project, by default, we use "speech" enabled audio.
+  # Set to false to disable
+  rtc_use_speech_audio_devices = true
+
   # When set to true, replace the audio output with a sinus tone at 440Hz.
   # The ADM will ask for audio data from WebRTC but instead of reading real
   # audio samples from NetEQ, a sinus tone will be generated and replace the
