@@ -47,6 +47,8 @@ grep mac_deployment_target src/build/config/mac/mac_sdk.gni
 
 # Update deployment target if necessary
 perl -i -pe's/mac_deployment_target = "11.0"/mac_deployment_target = "14.0"/g' build/config/mac/mac_sdk.gni
+# For Mac Mx machines
+perl -i -pe's/mac_deployment_target = "11.0"/mac_deployment_target = "15.0"/g' build/config/mac/mac_sdk.gni
 
 # Audio Device Module
 
