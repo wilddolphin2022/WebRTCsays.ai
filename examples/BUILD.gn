@@ -974,6 +974,7 @@ if (!build_with_chromium) {
       lib_dirs = [
         "../../src/modules/third_party/whisper.cpp/build/src",
         "../../src/modules/third_party/llama.cpp/build/src",
+        "../../src/modules/third_party/llama.cpp/build/bin",
         "../../src/modules/third_party/llama.cpp/build/ggml/src",
         "../../src/modules/third_party/espeak-ng/build/src/libespeak-ng",
         "../../src/modules/third_party/espeak-ng/build/src/speechPlayer",
