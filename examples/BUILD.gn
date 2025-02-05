@@ -1010,7 +1010,7 @@ if (!build_with_chromium) {
           # Add rpaths for external libraries. Assuming webrtc_direct built in src/webrtc/src/out/<debug|release>
           "-Wl,-rpath,@loader_path/../../modules/third_party/whisper.cpp/build/src",  # Relative to the executable
           "-Wl,-rpath,@loader_path/../../modules/third_party/whisper.cpp/build/ggml/src",  # Relative to the executable
-          "-Wl,-rpath,@loader_path/../../modules/third_party/llama.cpp/build/src",  # Relative to the executable
+          "-Wl,-rpath,@loader_path/../../modules/third_party/llama.cpp/build/bin",  # Relative to the executable
           "-Wl,-rpath,@loader_path/../../modules/third_party/llama.cpp/build/ggml/src",  # Relative to the executable
           "-Wl,-rpath,@loader_path/../../modules/third_party/pcaudiolib/src",  # Relative to the executable
         ]
