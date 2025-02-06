@@ -74,8 +74,8 @@ openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 3
 ./out/debug/direct --help
 
 # Run direct communication test
-./out/debug/direct --mode=callee 127.0.0.1:3456 --encryption --webrtc_cert_path cert.pem --webrtc_key_path key.pe
-./out/debug/direct --mode=caller 127.0.0.1:3456 --encryption --webrtc_cert_path cert.pem --webrtc_key_path key.pe
+./out/debug/direct --mode=callee 127.0.0.1:3456 --encryption --webrtc_cert_path=cert.pem --webrtc_key_path=key.pem
+./out/debug/direct --mode=caller 127.0.0.1:3456 --encryption --webrtc_cert_path=cert.pem --webrtc_key_path=key.pem
 
 # Whisper Test
 ./out/debug/direct --mode=callee 127.0.0.1:3456 --whisper --encryption
