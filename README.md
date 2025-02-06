@@ -1,3 +1,5 @@
+![alt text](webrtcsaysai.jpg "Logo")
+
 # Building WebRTCsays.ai
 
 ## Setup Environment
@@ -6,18 +8,19 @@
 # Add depot_tools to your PATH
 export PATH=~/depot_tools:$PATH
 
-# Configure and sync [gclient](https://x.com/i/grok?text=gclient)
+# Configure and sync gclient
 # .gclient in original folder should be like this
-# solutions = [
-#  {
-#    "name": "src",
-#    "url": "https://github.com/wilddolphin2022/WebRTCsays.ai",
-#    "deps_file": "DEPS",
-#    "managed": False,
-#    "custom_deps": {},
-#  },
-#]
-#target_os = ["ios", "mac", "linux"]
+ solutions = [
+  {
+    "name": "src",
+    "url": "https://github.com/wilddolphin2022/webrtcsays.ai",
+    "deps_file": "DEPS",
+    "managed": False,
+    "custom_deps": {},
+  },
+]
+target_os = ["ios", "mac", "linux"]
+# eof .gclient
 
 gclient config https://github.com/wilddolphin2022/webrtcsays.ai.git
 gclient sync
