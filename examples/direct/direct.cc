@@ -161,11 +161,9 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  std::cout << "starting direct..." << std::endl;
   rtc::InitializeSSL();
 
   if (opts.mode == "caller") {
-    std::cout << "mode is caller..." << std::endl;
     DirectCaller caller(rtc::SocketAddress(ip, port), opts.encryption);
     if (!caller.Initialize()) {
       RTC_LOG(LS_ERROR) << "failed to initialize caller";
@@ -177,9 +175,12 @@ int main(int argc, char* argv[]) {
     }
     caller.Run();
   } else if (opts.mode == "callee") {
-    std::cout << "mode is callee..." << std::endl;
     DirectCallee callee(port, opts.encryption);
-    callee.SetEnableWhisper(opts.whisper);
+    if(opts.whisper) {
+      callee.SetEnableWhisper(opts.whisper);
+      callee.SetWhisperModel(opts.whisper_model);
+      callee.SetLlamaModel(opts.llama_model);
+    }
     if (!callee.Initialize()) {
       RTC_LOG(LS_ERROR) << "Failed to initialize callee";
       return 1;

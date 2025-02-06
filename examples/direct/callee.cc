@@ -14,12 +14,13 @@
 
 // DirectCallee Implementation
 DirectCallee::DirectCallee(
-        const int local_port,
-        const bool enable_encryption,
-        const bool enable_video,
-        const bool enable_whisper) 
-        : DirectPeer(false, enable_encryption, enable_video, enable_whisper), 
-        local_port_(local_port) {}
+    const int local_port,
+    const bool enable_encryption,
+    const bool enable_video,
+    const bool enable_whisper
+    ) 
+    : DirectPeer(false, enable_encryption, enable_video, enable_whisper), 
+    local_port_(local_port) {}
 
 DirectCallee::~DirectCallee() {
     if (tcp_socket_) {

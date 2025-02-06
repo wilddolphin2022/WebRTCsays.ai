@@ -170,4 +170,7 @@ done
         ./libtool --mode=install cp src/libpcaudio.la  ${WEBRTC_SRC_DIR}/modules/third_party/pcaudiolib/src/libpcaudio.dylib
     fi
 
-    
+    if [ ! -f ${WEBRTC_SRC_DIR}/cert.pem ]; then
+    echo "creating certtificate in ${PWD}"
+        openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 3650 -nodes -subj "/C=XX/ST=StateName/L=CityName/O=CompanyName/OU=CompanySectionName/CN=CommonNameOrHostname"
+    fi

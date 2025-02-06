@@ -29,6 +29,8 @@
 #include "rtc_base/platform_thread.h"
 #include "rtc_base/system/file_wrapper.h"
 #include "rtc_base/logging.h"
+#include "api/task_queue/default_task_queue_factory.h"
+
 #include "speech_audio_device.h"
 
 struct whisper_context;
@@ -36,6 +38,7 @@ struct whisper_context;
 class WhisperTranscriber {
  private:
   SpeechAudioDevice* _speech_audio_device  = nullptr;
+  std::unique_ptr<webrtc::TaskQueueFactory> _task_queue_factory;
   std::unique_ptr<TaskQueuePool> _task_queue_pool;
 
   std::string _modelFilename;

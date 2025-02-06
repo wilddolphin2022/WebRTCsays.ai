@@ -92,7 +92,7 @@ bool WhisperAudioDevice::Initialized() const {
 
 // Method to add text to the queue in a thread-safe manner
 void WhisperAudioDevice::speakText(const std::string& text) {
-  {
+  if(_tts) {
     std::lock_guard<std::mutex> lock(_queueMutex);
     std::string s(text);
     rtrim(s);
@@ -253,10 +253,11 @@ bool WhisperAudioDevice::RecThreadProcess() {
 
   // Check if it's time to process another 10ms chunk
   if (_lastCallRecordMillis == 0 || currentTime - _lastCallRecordMillis >= 10) {
-    std::string textToSpeak;
+    
+    // if transcribing, pop text
     bool shouldSynthesize = false;
-
-    {
+    std::string textToSpeak;
+    if(_tts) {
       std::unique_lock<std::mutex> lock(_queueMutex);
       if (!_textQueue.empty()) {
         textToSpeak = _textQueue.front();
@@ -522,7 +523,8 @@ bool WhisperAudioDevice::PlayThreadProcess() {
     }
     #endif // defined(PLAY_WAV_ON_PLAY)
 
-    _whisper_transcriber->ProcessAudioBuffer((uint8_t*)_playoutBuffer, kPlayoutBufferSize);
+    if(_whisper_transcriber)
+      _whisper_transcriber->ProcessAudioBuffer((uint8_t*)_playoutBuffer, kPlayoutBufferSize);
 
     _lastCallPlayoutMillis = currentTime;
   }

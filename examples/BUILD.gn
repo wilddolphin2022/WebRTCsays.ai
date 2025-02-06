@@ -996,8 +996,7 @@ if (!build_with_chromium) {
       ]
       if(is_linux) {
         libs += [
-          "stdc++",
-          "gcc_s"
+          "stdc++"
         ]
         lib_dirs += ["/usr/lib/x86_64-linux-gnu"]
         ldflags = [

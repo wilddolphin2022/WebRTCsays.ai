@@ -69,7 +69,9 @@ void DirectPeer::Start() {
         deps.task_queue_factory.reset(webrtc::CreateDefaultTaskQueueFactory().release());
         audio_device_module_ = deps.worker_thread->BlockingCall([&]() -> rtc::scoped_refptr<webrtc::AudioDeviceModule> {
             auto adm = webrtc::AudioDeviceModule::Create(
-                webrtc::AudioDeviceModule::kSpeechAudio, deps.task_queue_factory.get());
+                webrtc::AudioDeviceModule::kSpeechAudio, 
+                deps.task_queue_factory.get()
+                );
             if (adm) {
                 RTC_LOG(LS_INFO) << "Audio device module created successfully";                
             }

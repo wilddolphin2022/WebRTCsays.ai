@@ -24,6 +24,7 @@ WhisperTranscriber::WhisperTranscriber(
       webrtc::TaskQueueFactory* task_queue_factory, 
       const std::string& inputFilename) 
     : _speech_audio_device(speech_audio_device),
+      _task_queue_factory(task_queue_factory),
       _whisperContext(nullptr),
       _audioBuffer(kRingBufferSizeIncrement),
       _running(false),
@@ -45,9 +46,12 @@ WhisperTranscriber::WhisperTranscriber(
     }
 
     // Creating task pool
-    //RTC_LOG(LS_INFO) << "Creating TaskQueuePool on thread " << rtc::Thread::Current() << ", using factory " << task_queue_factory;
-    //_task_queue_pool.reset(new TaskQueuePool(task_queue_factory, 
-    //    std::min(16, static_cast<int>(std::thread::hardware_concurrency()))));
+    if(!_task_queue_factory)
+        _task_queue_factory = webrtc::CreateDefaultTaskQueueFactory();
+
+    RTC_LOG(LS_INFO) << "Creating TaskQueuePool on thread " << rtc::Thread::Current() << ", using factory " << task_queue_factory;
+    _task_queue_pool.reset(new TaskQueuePool(_task_queue_factory.get(), 
+       std::min(16, static_cast<int>(std::thread::hardware_concurrency()))));
 }
 
 WhisperTranscriber::~WhisperTranscriber() {
@@ -201,12 +205,12 @@ bool WhisperTranscriber::RunProcessingThread() {
         if (_audioBuffer.read(audioBuffer.data(), audioBuffer.size())) {
             // Create a local copy for the lambda
             std::vector<uint8_t> localAudioBuffer = audioBuffer;
-            //_task_queue_pool->enqueue([this, localAudioBuffer = std::move(localAudioBuffer)]() mutable {
+            _task_queue_pool->enqueue([this, localAudioBuffer = std::move(localAudioBuffer)]() mutable {
                 // Perform Whisper transcription
                 if (_whisperContext && localAudioBuffer.size()) {
                     if (localAudioBuffer.size() % 2 != 0) {
                         RTC_LOG(LS_WARNING) << "Audio buffer size is not even: " << localAudioBuffer.size();
-                        return false; // or handle this case appropriately
+                        return /*false*/; // or handle this case appropriately
                     }
 
                     // Convert PCM16 buffer to float
@@ -233,7 +237,7 @@ bool WhisperTranscriber::RunProcessingThread() {
                     // Use non-blocking transcription
                     TranscribeAudioNonBlocking(pcmf32);
                 }
-            //});
+            });
 
             // Small sleep to prevent tight looping
             std::this_thread::sleep_for(std::chrono::milliseconds(10));

@@ -197,6 +197,8 @@ public:
     virtual void SetEnableEncryption(const bool enable_video) { enable_video_ = enable_video; }
     virtual void SetEnableVideo(const bool enable_video) { enable_video_ = enable_video; }
     virtual void SetEnableWhisper(const bool enable_whisper) { enable_whisper_ = enable_whisper; }
+    virtual void SetWhisperModel(const std::string& whisper_model) { ::setenv("WHISPER_MODEL", whisper_model.c_str(), true); }
+    virtual void SetLlamaModel(const std::string& llama_model) { ::setenv("LLAMA_MODEL", llama_model.c_str(), true); }
 
     // PeerConnectionObserver implementation
     void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState new_state) override;
