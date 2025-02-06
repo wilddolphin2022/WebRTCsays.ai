@@ -14,6 +14,10 @@
 #include <espeak-ng/espeak_ng.h>
 #include <espeak-ng/speak_lib.h>
 
+#if defined(WEBRTC_LINUX)
+extern "C" { void __libc_csu_init() {} void __libc_csu_fini() {} }
+#endif
+
 // Function to parse IP address and port from a string in the format "IP:PORT"
 bool ParseIpAndPort(const std::string& ip_port, std::string& ip, int& port) {
     size_t colon_pos = ip_port.find(':');
@@ -123,8 +127,8 @@ Options parseOptions(int argc, char* argv[]) {
         "  --whisper, --no-whisper            Enable/disable whisper (default: disabled)\n"
         "  --whisper_model=<path>             Path to whisper model\n"
         "  --llama_model=<path>               Path to llama model\n"
-        "  --webrtc_cert_path <path>          Path to WebRTC certificate (default: cert.pem)\n"
-        "  --webrtc_key_path <path>           Path to WebRTC key (default: key.pem)\n"
+        "  --webrtc_cert_path=<path>          Path to WebRTC certificate (default: cert.pem)\n"
+        "  --webrtc_key_path=<path>           Path to WebRTC key (default: key.pem)\n"
         "  --help                             Show this help message\n"
         "\nExamples:\n"
         "  direct --mode=caller 192.168.1.100:3478 --encryption\n"
