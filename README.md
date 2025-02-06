@@ -1,9 +1,9 @@
+# WebRTC now speaks AI language
 ![alt text](webrtcsaysai.jpg "Logo")
 
-# Building WebRTCsays.ai
+## Building WebRTCsays.ai
 
-## Setup Environment
-
+### Setup Environment and get code
 ```bash
 # Add depot_tools to your PATH
 export PATH=~/depot_tools:$PATH
@@ -25,8 +25,6 @@ target_os = ["ios", "mac", "linux"]
 gclient config https://github.com/wilddolphin2022/webrtcsays.ai.git
 gclient sync
 
-# Build Scripts
-
 # Navigate to the source directory. Original directory can be cleaned up leave "src"
 # Yes, I know, WebRTC can be obtuse. 
 cd src
@@ -34,15 +32,20 @@ cd src
 # Refresh pull link
 git pull https://github.com/wilddolphin2022/WebRTCsays.ai main
 
-# Make build scripts executable and run them
+```
+### Build Scripts
+```bash
+
+# Make build scripts executable and run them to get dependencies built
 chmod +x ./build-whisper.sh
 ./build-whisper.sh # Options: -d for debug, -r for release, -c to clean
 
 # For WebRTCsays.ai project, by default, we use "speech" enabled audio.
 # Set to false to disable in file webrtc.gni
 rtc_use_speech_audio_devices = true
-
-# macOS Deployment Target
+```
+### Build macOS Deployment Target
+```bash
 
 # Check and set macOS deployment target for compatibility with Whisper and LLaMA
 # which demand macOS 14.0 minimum
@@ -53,10 +56,18 @@ perl -i -pe's/mac_deployment_target = "11.0"/mac_deployment_target = "14.0"/g' b
 # For Mac Mx machines
 perl -i -pe's/mac_deployment_target = "11.0"/mac_deployment_target = "15.0"/g' build/config/mac/mac_sdk.gni
 
-# Audio Device Module
-
 # Modify audio device module for macOS if not yet
 perl -i -pe's/Master/Main/g' modules/audio_device/mac/audio_device_mac.cc
+
+```
+### Build Linux 
+```bash
+
+# Here will be notes specific to Linux build
+
+```
+### Generate and build "direct" application 
+```bash
 
 # Generate WebRTC example "direct"
 gn gen out/debug --args="is_debug=true rtc_include_opus = true rtc_build_examples = true"
@@ -68,21 +79,21 @@ ninja -C out/debug direct
 gn gen out/release --args="is_debug=false rtc_include_opus = true rtc_build_examples = true"
 ninja -C out/release direct
 
-## Testing
+```
+### Testing direct peer to peer application
+```bash
 
-# Make self-signed cert.pem and key.pem
+# Make self-signed cert.pem and key.pem used for encryption option
 openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 3650 -nodes -subj "/C=XX/ST=StateName/L=CityName/O=CompanyName/OU=CompanySectionName/CN=CommonNameOrHostname"
 
 # Help with options
 ./out/debug/direct --help
 
-# Run direct communication test
 ./out/debug/direct --mode=callee 127.0.0.1:3456 --encryption --webrtc_cert_path=cert.pem --webrtc_key_path=key.pem
 ./out/debug/direct --mode=caller 127.0.0.1:3456 --encryption --webrtc_cert_path=cert.pem --webrtc_key_path=key.pem
 
-# Whisper Test
+# Run direct with whisper
 ./out/debug/direct --mode=callee 127.0.0.1:3456 --whisper --encryption
 ./out/debug/direct --mode=caller 127.0.0.1:3456 --whisper --encryption
-
 
 ```
