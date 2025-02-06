@@ -143,31 +143,25 @@ Options parseOptions(int argc, char* argv[]) {
         // Handle parameters with values
         if (arg.find("--mode=") == 0) {
             opts.mode = arg.substr(7);
-        }
-        else if (arg == "--mode" && i + 1 < argc) {
-            opts.mode = argv[++i];
-        }
-       if (arg.find("--mode=") == 0) {
-            // ... existing mode parsing ...
         } else if (arg == "--encryption") {
             opts.encryption = true;
         } else if (arg == "--whisper") {
             opts.whisper = true;
         } else if (arg.find("--whisper_model=") == 0) {
-            opts.whisper_model = arg.substr(15);  // Length of "-whisper_model="
+            opts.whisper_model = arg.substr(16);  // Length of "-whisper_model="
             RTC_LOG(LS_INFO) << "Whisper model path: " << opts.whisper_model;
             if(!opts.whisper) opts.whisper = true;
         } else if (arg.find("--llama_model=") == 0) {
-            opts.llama_model = arg.substr(13);  // Length of "-llama_model="
+            opts.llama_model = arg.substr(14);  // Length of "-llama_model="
             RTC_LOG(LS_INFO) << "LLAMA model path: " << opts.llama_model;
-        } else if (arg == "--webrtc_cert_path" && i + 1 < argc) {
-            opts.webrtc_cert_path = argv[++i];
+        } else if (arg.find("--webrtc_cert_path=") == 0) {
+            opts.webrtc_cert_path = arg.substr(19);
         }
-        else if (arg == "--webrtc_key_path" && i + 1 < argc) {
-            opts.webrtc_key_path = argv[++i];
+        else if (arg.find("--webrtc_key_path=") == 0) {
+            opts.webrtc_key_path = arg.substr(18);
         }
-        else if (arg == "--webrtc_speech_initial_playout_wav" && i + 1 < argc) {
-            opts.webrtc_speech_initial_playout_wav = argv[++i];
+        else if (arg.find("--webrtc_speech_initial_playout_wav=") == 0) {
+            opts.webrtc_speech_initial_playout_wav = arg.substr(36);
         }
         // Handle flags
         else if (arg == "--help") {
@@ -196,21 +190,26 @@ Options parseOptions(int argc, char* argv[]) {
     }
 
     // Load environment variables if paths not provided
+    if(opts.webrtc_cert_path.empty()) {
     if (const char* env_cert = std::getenv("WEBRTC_CERT_PATH")) {
         opts.webrtc_cert_path = env_cert;
-    }
+    }}
+    if(opts.webrtc_key_path.empty()) {
     if (const char* env_key = std::getenv("WEBRTC_KEY_PATH")) {
         opts.webrtc_key_path = env_key;
-    }
+    }}
+    if(opts.webrtc_speech_initial_playout_wav.empty()) {
     if (const char* env_wav = std::getenv("WEBRTC_SPEECH_INITIAL_PLAYOUT_WAV")) {
         opts.webrtc_speech_initial_playout_wav = env_wav;
-    }
+    }}
+    if(opts.whisper_model.empty()) {
     if (const char* env_whisper = std::getenv("WHISPER_MODEL")) {
         opts.whisper_model = env_whisper;
-    }
+    }}
+    if(opts.llama_model.empty()) {
     if (const char* env_llama = std::getenv("LLAMA_MODEL")) {
         opts.llama_model = env_llama;
-    }
+    }}
 
     return opts;
 }

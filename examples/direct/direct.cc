@@ -145,10 +145,9 @@ bool DirectApplication::SendMessage(const std::string& message) {
 int main(int argc, char* argv[]) {
   Options opts = parseOptions(argc, argv);
 
-  if (opts.help) {
+  if (argc==1||opts.help) {
     std::string usage = opts.help_string;
     RTC_LOG(LS_ERROR) << usage;
-    speakString(usage);
     return 1;
   }
 
@@ -169,11 +168,11 @@ int main(int argc, char* argv[]) {
     std::cout << "mode is caller..." << std::endl;
     DirectCaller caller(rtc::SocketAddress(ip, port), opts.encryption);
     if (!caller.Initialize()) {
-      RTC_LOG(LS_ERROR) << "Failed to initialize caller";
+      RTC_LOG(LS_ERROR) << "failed to initialize caller";
       return 1;
     }
     if (!caller.Connect()) {
-      RTC_LOG(LS_ERROR) << "Failed to connect";
+      RTC_LOG(LS_ERROR) << "failed to connect";
       return 1;
     }
     caller.Run();
