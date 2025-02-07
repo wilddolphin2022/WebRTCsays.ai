@@ -9,8 +9,8 @@
 export PATH=~/depot_tools:$PATH
 
 # Configure and sync gclient
-# .gclient in original folder should be like this
- solutions = [
+# .gclient in original folder should be exactly like this
+solutions = [
   {
     "name": "src",
     "url": "https://github.com/wilddolphin2022/webrtcsays.ai",
