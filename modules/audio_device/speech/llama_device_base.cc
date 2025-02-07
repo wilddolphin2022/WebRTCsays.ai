@@ -10,9 +10,9 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include <llama.h>
 #include <thread>
 
+#include <llama.h>
 #include "llama_device_base.h"
 #include "rtc_base/logging.h"
 #include "whisper_helpers.h"
@@ -23,9 +23,8 @@ LlamaSimpleChat::~LlamaSimpleChat() {
     if (smpl_) {
         llama_sampler_free(smpl_);
     }
-    if (ctx_) {
-        llama_free(ctx_);
-    }
+
+    FreeContext();
     if (model_) {
         llama_model_free(model_);
     }
@@ -75,6 +74,11 @@ bool LlamaSimpleChat::LoadModel() {
 }
 
 bool LlamaSimpleChat::InitializeContext() {
+    
+    if(ctx_) {
+        FreeContext();
+    }
+    
     if (!model_ || !vocab_) {
         RTC_LOG(LS_ERROR) << "Model or vocab not loaded.";
         return false;
@@ -110,100 +114,373 @@ bool LlamaSimpleChat::InitializeContext() {
     return true;
 }
 
+void LlamaSimpleChat::FreeContext() {
+    if (ctx_) {
+        llama_free(ctx_);
+        ctx_ = nullptr;
+    }
+}
+
+// Add helper function to detect repetition
+bool LlamaSimpleChat::isRepetitive(const std::string& text, size_t minPatternLength) {
+    if (text.length() < minPatternLength * 2) {
+        return false;
+    }
+    
+    // Check for immediate repetition of phrases
+    for (size_t len = minPatternLength; len <= text.length() / 2; ++len) {
+        std::string last = text.substr(text.length() - len);
+        size_t pos = text.rfind(last, text.length() - len - 1);
+        if (pos != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Add helper to check for confirmation patterns
+bool LlamaSimpleChat::hasConfirmationPattern(const std::string& text) {
+    static const std::vector<std::string> patterns = {
+        "yeah", "okay", "so", "right", "think",
+        "that's", "correct", "makes sense"
+    };
+    
+    size_t matches = 0;
+    std::string lower = text;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    
+    for (const auto& pattern : patterns) {
+        if (lower.find(pattern) != std::string::npos) {
+            matches++;
+            if (matches >= 3) { // If we see multiple confirmation words
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 std::string LlamaSimpleChat::generate(const std::string& prompt) {
-    std::string response;
-    std::string current_phrase;
-    bool answer_started = false;
- 
-    const int n_prompt_tokens = -llama_tokenize(vocab_, prompt.c_str(), prompt.size(), NULL, 0, true, true);
-    std::vector<llama_token> prompt_tokens(n_prompt_tokens);
-    if (llama_tokenize(vocab_, prompt.c_str(), prompt.size(), prompt_tokens.data(), 
-        prompt_tokens.size(), llama_get_kv_cache_used_cells(ctx_) == 0, true) < 0) {
-        RTC_LOG(LS_ERROR) << "failed to tokenize the prompt";
+    // Tokenize the prompt
+    const struct llama_vocab* vocab = llama_model_get_vocab(model_);
+    
+    const int n_tokens = -llama_tokenize(vocab, prompt.c_str(), prompt.size(), nullptr, 0, true, false);
+    if (n_tokens < 0) {
+        RTC_LOG(LS_ERROR) << "Failed to count prompt tokens";
         return "";
     }
 
-    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), prompt_tokens.size());
-    llama_token new_token_id;
+    std::vector<llama_token> tokens(n_tokens);
+    if (llama_tokenize(vocab, prompt.c_str(), prompt.size(), tokens.data(), tokens.size(), true, false) < 0) {
+        RTC_LOG(LS_ERROR) << "Failed to tokenize prompt";
+        return "";
+    }
 
+    // Create batch for prompt processing
+    llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
+    
+    if (llama_decode(ctx_, batch)) {
+        RTC_LOG(LS_ERROR) << "Failed to process prompt";
+        return "";
+    }
+
+    // Initialize generation
+    std::string response;
+    std::string current_phrase;
+    std::string recent_text;  // For pattern detection
     continue_ = true;
-    int bos_found = 0;
+    
+    const int max_response_tokens = 256;
+    const int max_repetition_window = 50;  // Characters to check for repetition
+    int generated_tokens = 0;
+    int unchanged_count = 0;   // Counter for unchanged text
+    int confirmation_count = 0; // Counter for confirmation patterns
 
-    while (true) {
+    // Initialize sampler chain if needed
+    if (!smpl_) {
+        auto params = llama_sampler_chain_default_params();
+        smpl_ = llama_sampler_chain_init(params);
+        llama_sampler_chain_add(smpl_, llama_sampler_init_top_k(40));
+        llama_sampler_chain_add(smpl_, llama_sampler_init_top_p(0.95f, 1));
+        llama_sampler_chain_add(smpl_, llama_sampler_init_temp(0.8f));
+        llama_sampler_chain_add(smpl_, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+    }
+
+    // Generation loop
+    while (continue_ && generated_tokens < max_response_tokens) {
         if (!continue_) {
+            break;  // Immediate interrupt check
+        }
+
+        // Sample next token
+        llama_token new_token_id = llama_sampler_sample(smpl_, ctx_, -1);
+        
+        if (new_token_id == llama_vocab_eos(vocab)) {
+            break;
+        }
+
+        // Convert token to text
+        char token_text[8];
+        int token_text_len = llama_token_to_piece(vocab, new_token_id, token_text, sizeof(token_text), 0, true);
+        if (token_text_len < 0) {
+            break;
+        }
+
+        // Process the generated piece
+        std::string piece(token_text, token_text_len);
+        current_phrase += piece;
+        recent_text += piece;
+
+        // Keep recent_text to a manageable size
+        if (recent_text.length() > max_repetition_window) {
+            recent_text = recent_text.substr(recent_text.length() - max_repetition_window);
+        }
+
+        // Check for natural response end conditions
+        bool should_end = false;
+
+        // 1. Check for repetitive patterns
+        if (isRepetitive(recent_text)) {
+            unchanged_count++;
+            if (unchanged_count > 3) {  // Allow some repetition before breaking
+                should_end = true;
+            }
+        } else {
+            unchanged_count = 0;
+        }
+
+        // 2. Check for excessive confirmation patterns
+        if (hasConfirmationPattern(current_phrase)) {
+            confirmation_count++;
+            if (confirmation_count > 2) {  // Break if too many confirmation patterns
+                should_end = true;
+            }
+        }
+
+        // Process completed phrases
+        if (piece.find_first_of(".!?") != std::string::npos || should_end) {
             if (_speech_audio_device && !current_phrase.empty()) {
                 _speech_audio_device->speakText(current_phrase);
             }
-            break;
-        }
-
-        int n_ctx = llama_n_ctx(ctx_);
-        int n_ctx_used = llama_get_kv_cache_used_cells(ctx_);
-        if (n_ctx_used + batch.n_tokens > n_ctx) {
-            RTC_LOG(LS_ERROR) << "context size exceeded";
-            break;
-        }
-
-        if (llama_decode(ctx_, batch)) {
-            RTC_LOG(LS_ERROR) << "failed to decode";
-            break;
-        }
-
-        new_token_id = llama_sampler_sample(smpl_, ctx_, -1);
-
-        if (llama_vocab_is_eog(vocab_, new_token_id)) {
-            break;
-        }
-
-        char buf[256];
-        int n = llama_token_to_piece(vocab_, new_token_id, buf, sizeof(buf), 0, true);
-        if (n < 0) {
-            RTC_LOG(LS_ERROR) << "failed to convert token to piece";
-            break;
-        }
-
-        if (buf[0] == 10) {
-            bos_found++;
-            batch = llama_batch_get_one(&new_token_id, 1);
-            continue;
-        }
-
-        if (bos_found > 1) {
-            if (!answer_started) {
-                answer_started = true;
-                bos_found = 0;
-            } else if (response.find("Answer: ") != std::string::npos && 
-                      response.back() == '.') {
-                if (_speech_audio_device && !current_phrase.empty()) {
-                    _speech_audio_device->speakText(current_phrase);
-                }
+            response += current_phrase;
+            current_phrase.clear();
+            
+            if (should_end) {
                 break;
             }
         }
 
-        if (answer_started) {
-            std::string s(buf, n);
-            HexPrinter::Dump((const uint8_t*)buf, n);
-
-            current_phrase += s;
-            if (s.find('.') != std::string::npos) {
-                if (_speech_audio_device) {
-                    _speech_audio_device->speakText(current_phrase);
-                }
-                response += current_phrase;
-                current_phrase.clear();
-            }
+        // Prepare next token
+        batch = llama_batch_get_one(&new_token_id, 1);
+        if (llama_decode(ctx_, batch)) {
+            break;
         }
 
-        batch = llama_batch_get_one(&new_token_id, 1);
+        generated_tokens++;
     }
 
+    // Handle any remaining text
     if (!current_phrase.empty()) {
+        if (_speech_audio_device) {
+            _speech_audio_device->speakText(current_phrase);
+        }
         response += current_phrase;
     }
 
     return response;
 }
+
+// std::string LlamaSimpleChat::generate(const std::string& prompt) {
+//     // Tokenize the prompt
+//     const struct llama_vocab* vocab = llama_model_get_vocab(model_);
+    
+//     // Get required number of tokens for prompt
+//     const int n_tokens = -llama_tokenize(vocab, prompt.c_str(), prompt.size(), nullptr, 0, true, false);
+//     if (n_tokens < 0) {
+//         RTC_LOG(LS_ERROR) << "Failed to count prompt tokens";
+//         return "";
+//     }
+
+//     std::vector<llama_token> tokens(n_tokens);
+//     if (llama_tokenize(vocab, prompt.c_str(), prompt.size(), tokens.data(), tokens.size(), true, false) < 0) {
+//         RTC_LOG(LS_ERROR) << "Failed to tokenize prompt";
+//         return "";
+//     }
+
+//     // Create batch for prompt processing
+//     llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
+    
+//     // Process the prompt
+//     if (llama_decode(ctx_, batch)) {
+//         RTC_LOG(LS_ERROR) << "Failed to process prompt";
+//         return "";
+//     }
+
+//     // Initialize generation
+//     std::string response;
+//     std::string current_phrase;
+//     continue_ = true;
+    
+//     const int max_response_tokens = 256;  // Limit response length
+//     int generated_tokens = 0;
+
+//     // Initialize sampler chain if not already done
+//     if (!smpl_) {
+//         auto params = llama_sampler_chain_default_params();
+//         smpl_ = llama_sampler_chain_init(params);
+//         // Add sampling strategies
+//         llama_sampler_chain_add(smpl_, llama_sampler_init_top_k(40));
+//         llama_sampler_chain_add(smpl_, llama_sampler_init_top_p(0.95f, 1));
+//         llama_sampler_chain_add(smpl_, llama_sampler_init_temp(0.8f));
+//         // Final distribution sampler
+//         llama_sampler_chain_add(smpl_, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+//     }
+
+//     // Generation loop
+//     while (continue_ && generated_tokens < max_response_tokens) {
+//         // Sample next token
+//         llama_token new_token_id = llama_sampler_sample(smpl_, ctx_, -1);
+        
+//         if (new_token_id == llama_vocab_eos(vocab)) {
+//             break;
+//         }
+
+//         // Convert token to text
+//         char token_text[8];
+//         int token_text_len = llama_token_to_piece(vocab, new_token_id, token_text, sizeof(token_text), 0, true);
+//         if (token_text_len < 0) {
+//             RTC_LOG(LS_ERROR) << "Failed to convert token to text";
+//             break;
+//         }
+
+//         // Process the generated piece
+//         std::string piece(token_text, token_text_len);
+//         current_phrase += piece;
+
+//         // Check for natural breaks (end of sentences)
+//         if (piece.find_first_of(".!?") != std::string::npos) {
+//             if (_speech_audio_device && !current_phrase.empty()) {
+//                 _speech_audio_device->speakText(current_phrase);
+//             }
+//             response += current_phrase;
+//             current_phrase.clear();
+//         }
+
+//         // Prepare next token for generation
+//         batch = llama_batch_get_one(&new_token_id, 1);
+//         if (llama_decode(ctx_, batch)) {
+//             RTC_LOG(LS_ERROR) << "Failed to decode";
+//             break;
+//         }
+
+//         generated_tokens++;
+//     }
+
+//     // Handle any remaining text
+//     if (!current_phrase.empty()) {
+//         if (_speech_audio_device) {
+//             _speech_audio_device->speakText(current_phrase);
+//         }
+//         response += current_phrase;
+//     }
+
+//     return response;
+// }
+
+// std::string LlamaSimpleChat::generate(const std::string& prompt) {
+//     std::string response;
+//     std::string current_phrase;
+//     bool answer_started = false;
+ 
+//     const int n_prompt_tokens = -llama_tokenize(vocab_, prompt.c_str(), prompt.size(), NULL, 0, true, true);
+//     std::vector<llama_token> prompt_tokens(n_prompt_tokens);
+//     if (llama_tokenize(vocab_, prompt.c_str(), prompt.size(), prompt_tokens.data(), 
+//         prompt_tokens.size(), llama_get_kv_cache_used_cells(ctx_) == 0, true) < 0) {
+//         RTC_LOG(LS_ERROR) << "failed to tokenize the prompt";
+//         return "";
+//     }
+
+//     llama_batch batch = llama_batch_get_one(prompt_tokens.data(), prompt_tokens.size());
+//     llama_token new_token_id;
+
+//     continue_ = true;
+//     int bos_found = 0;
+
+//     while (true) {
+//         if (!continue_) {
+//             if (_speech_audio_device && !current_phrase.empty()) {
+//                 _speech_audio_device->speakText(current_phrase);
+//             }
+//             break;
+//         }
+
+//         int n_ctx = llama_n_ctx(ctx_);
+//         int n_ctx_used = llama_get_kv_cache_used_cells(ctx_);
+//         if (n_ctx_used + batch.n_tokens > n_ctx) {
+//             RTC_LOG(LS_ERROR) << "context size exceeded";
+//             break;
+//         }
+
+//         if (llama_decode(ctx_, batch)) {
+//             RTC_LOG(LS_ERROR) << "failed to decode";
+//             break;
+//         }
+
+//         new_token_id = llama_sampler_sample(smpl_, ctx_, -1);
+
+//         if (llama_vocab_is_eog(vocab_, new_token_id)) {
+//             break;
+//         }
+
+//         char buf[256];
+//         int n = llama_token_to_piece(vocab_, new_token_id, buf, sizeof(buf), 0, true);
+//         if (n < 0) {
+//             RTC_LOG(LS_ERROR) << "failed to convert token to piece";
+//             break;
+//         }
+
+//         if (buf[0] == 10) {
+//             bos_found++;
+//             batch = llama_batch_get_one(&new_token_id, 1);
+//             continue;
+//         }
+
+//         if (bos_found > 1) {
+//             if (!answer_started) {
+//                 answer_started = true;
+//                 bos_found = 0;
+//             } else if (response.find("Answer: ") != std::string::npos && 
+//                       response.back() == '.') {
+//                 if (_speech_audio_device && !current_phrase.empty()) {
+//                     _speech_audio_device->speakText(current_phrase);
+//                 }
+//                 break;
+//             }
+//         }
+
+//         if (answer_started) {
+//             std::string s(buf, n);
+//             HexPrinter::Dump((const uint8_t*)buf, n);
+
+//             current_phrase += s;
+//             if (s.find('.') != std::string::npos) {
+//                 if (_speech_audio_device) {
+//                     _speech_audio_device->speakText(current_phrase);
+//                 }
+//                 response += current_phrase;
+//                 current_phrase.clear();
+//             }
+//         }
+
+//         batch = llama_batch_get_one(&new_token_id, 1);
+//     }
+
+//     if (!current_phrase.empty()) {
+//         response += current_phrase;
+//     }
+
+//     return response;
+// }
 
 //
 // Llama device base
@@ -282,6 +559,8 @@ bool LlamaDeviceBase::Start() {
           RTC_LOG(LS_INFO) << "Llama chat initialized!";
         }
 
+        //askLlama("Hello, what will be 2+2?");
+        // askLlama("Hello, what is 42 for you?");
         _running = true;
         _processingThread = rtc::PlatformThread::SpawnJoinable(
           [this] {
@@ -301,4 +580,21 @@ void LlamaDeviceBase::Stop() {
         
         _processingThread.Finalize();
     }
+}
+
+bool LlamaDeviceBase::TrimContext() {
+    if (context_tokens_.size() > max_context_tokens_) {
+        // Keep the most recent tokens within the limit
+        size_t excess = context_tokens_.size() - max_context_tokens_;
+        context_tokens_.erase(context_tokens_.begin(), context_tokens_.begin() + excess);
+        
+        // Reinitialize context with trimmed tokens
+        return _llama_chat->InitializeContext();
+    }
+    return true;
+}
+
+bool LlamaDeviceBase::AppendToContext(const std::vector<llama_token>& new_tokens) {
+    context_tokens_.insert(context_tokens_.end(), new_tokens.begin(), new_tokens.end());
+    return TrimContext();
 }

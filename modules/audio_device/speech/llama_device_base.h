@@ -27,6 +27,7 @@ struct llama_model;
 struct llama_context;
 struct llama_sampler;
 struct llama_vocab;
+typedef int32_t llama_token;
 
 class LlamaSimpleChat {
 public:
@@ -41,9 +42,11 @@ public:
   bool Initialize(SpeechAudioDevice* speech_audio_device);
   std::string generate(const std::string& request);
 
-private:
-  bool LoadModel();
   bool InitializeContext();
+  void FreeContext();
+
+  private:
+  bool LoadModel();
 
   std::string model_path_;
   int ngl_ = 99; // Number of GPU layers to offload
@@ -57,6 +60,11 @@ private:
   
   std::atomic<bool> continue_ = true;
   SpeechAudioDevice* _speech_audio_device = nullptr;
+
+  bool isRepetitive(const std::string& text, size_t minPatternLength = 4);
+  bool hasConfirmationPattern(const std::string& text);
+
+
 };
 
 class LlamaDeviceBase {
@@ -85,4 +93,11 @@ private:
   std::queue<std::string> _textQueue;
   std::mutex _queueMutex;
   std::condition_variable _queueCondition;
+
+  // Add these new members
+  std::vector<llama_token> context_tokens_;
+  const size_t max_context_tokens_ = 2048; // Adjust based on your model   
+  
+  bool TrimContext();
+  bool AppendToContext(const std::vector<llama_token>& new_tokens);
 };
