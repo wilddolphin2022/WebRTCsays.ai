@@ -59,6 +59,13 @@ perl -i -pe's/mac_deployment_target = "11.0"/mac_deployment_target = "15.0"/g' b
 # Modify audio device module for macOS if not yet
 perl -i -pe's/Master/Main/g' modules/audio_device/mac/audio_device_mac.cc
 
+# Remove obsolete Mac desktop capture code in webrtc.gni in case deployment target is more than 14.0
+# Find
+rtc_desktop_capture_supported =
+    (is_win && current_os != "winuwp") || is_mac ||
+    ((is_linux || is_chromeos) && (rtc_use_x11_extensions || rtc_use_pipewire))
+# and remove "is_mac ||"
+
 ```
 ### Build Linux 
 ```bash
