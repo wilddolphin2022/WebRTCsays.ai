@@ -171,6 +171,9 @@ bool WhisperTranscriber::TranscribeAudioNonBlocking(const std::vector<float>& pc
             }
         }
 
+     _timeMarker = rtc::TimeMillis() - _timeMarker;
+     RTC_LOG(LS_INFO) << "TIME TO WHISPER: " << _timeMarker << " MS";
+
      if (!fullTranscription.empty()) {
             RTC_LOG(LS_VERBOSE) << "Full Transcription: " << fullTranscription;
             // Remove text within brackets and the brackets themselves
@@ -200,6 +203,8 @@ bool WhisperTranscriber::RunProcessingThread() {
     std::vector<uint8_t> audioBuffer;
     
     while (_running && _audioBuffer.availableToRead() > 0) {
+        RTC_LOG(LS_INFO) << "Audio buffer availableToRead: " << _audioBuffer.availableToRead();
+
         // Ensure audioBuffer is sized correctly to receive data
         audioBuffer.resize(_audioBuffer.availableToRead());
         if (_audioBuffer.read(audioBuffer.data(), audioBuffer.size())) {
@@ -360,103 +365,119 @@ whisper_context* WhisperTranscriber::TryAlternativeInitMethods(const std::string
 }
 
 void WhisperTranscriber::ProcessAudioBuffer(uint8_t* playoutBuffer, size_t kPlayoutBufferSize) {
-    // Convert from uint8_t to int16_t for processing
-    std::vector<int16_t> int16Buffer;
-    int16Buffer.reserve(kPlayoutBufferSize / 2);
+    // Pre-allocate and reuse processing buffer
+    if (_processingBuffer.capacity() < (kPlayoutBufferSize / 2)) {
+        _processingBuffer.reserve(kPlayoutBufferSize / 2);
+    }
+    _processingBuffer.resize(kPlayoutBufferSize / 2);
+
+    // Optimized buffer conversion
     for (size_t i = 0; i < kPlayoutBufferSize; i += 2) {
-        int16_t sample = (int16_t)(playoutBuffer[i]) | ((int16_t)(playoutBuffer[i + 1]) << 8);
-        int16Buffer.push_back(sample);
+        _processingBuffer[i/2] = static_cast<int16_t>(
+            (static_cast<uint16_t>(playoutBuffer[i+1]) << 8) | 
+            static_cast<uint16_t>(playoutBuffer[i])
+        );
     }
 
-    // More conservative threshold and larger window
-    const float relativeThreshold = 0.1f;  // Increased to 10%
-    const uint windowSize = kSampleRate / 4;  // 250ms window
+    // Create silence finder with pre-allocated buffer
+    SilenceFinder<int16_t> silenceFinder(_processingBuffer.data(), _processingBuffer.size(), kSampleRate);
     
-    // Add hysteresis to prevent rapid switching
-    const float voiceStartThreshold = relativeThreshold * 1.2f;  // Higher threshold to start voice
-    const float voiceEndThreshold = relativeThreshold * 0.8f;   // Lower threshold to end voice
-
-    SilenceFinder<int16_t> silenceFinder(int16Buffer.data(), int16Buffer.size(), kSampleRate);
-    auto silenceRegions = silenceFinder.find(relativeThreshold, windowSize);
-    
+    // Voice detection logic from Step 1 (using _processingBuffer instead of int16Buffer)
     bool voicePresent = false;
-    if (silenceFinder.avgAmplitude == 0) {
-        //RTC_LOG(LS_ERROR) << "Average amplitude is zero, cannot determine voice presence.";
-    } else {
-        // Improved voice detection logic
-        double thresholdAmplitude = static_cast<double>(silenceFinder.avgAmplitude);
+    const uint windowSize = kSampleRate / 8;
+    
+    if (silenceFinder.avgAmplitude > 0) {
+        float thresholdRatio = static_cast<float>(silenceFinder.delta(
+            _processingBuffer.data(), 
+            std::min(windowSize, static_cast<uint>(_processingBuffer.size()))
+        )) / silenceFinder.avgAmplitude;
+
+        // Voice detection state machine (same as Step 1)...
         if (!_inVoiceSegment) {
-            voicePresent = thresholdAmplitude > (voiceStartThreshold * thresholdAmplitude);
+            if (thresholdRatio > voiceStartThreshold) {
+                _voiceState.consecutiveVoiceFrames++;
+                _voiceState.consecutiveSilenceFrames = 0;
+                
+                if (_voiceState.consecutiveVoiceFrames >= kMinVoiceFrames) {
+                    voicePresent = true;
+                    _inVoiceSegment = true;
+                }
+            } else {
+                _voiceState.consecutiveVoiceFrames = 0;
+            }
         } else {
-            voicePresent = thresholdAmplitude > (voiceEndThreshold * thresholdAmplitude);
+            if (thresholdRatio < voiceEndThreshold) {
+                _voiceState.consecutiveSilenceFrames++;
+                _voiceState.consecutiveVoiceFrames = 0;
+                
+                if (_voiceState.consecutiveSilenceFrames >= kMinSilenceFrames) {
+                    _inVoiceSegment = false;
+                }
+            } else {
+                _voiceState.consecutiveSilenceFrames = 0;
+                voicePresent = true;
+            }
         }
     }
 
-    // Convert to uint8_t for accumulation
-    std::vector<uint8_t> currentBuffer;
-    currentBuffer.reserve(int16Buffer.size() * 2);
-    for (const auto& sample : int16Buffer) {
-        currentBuffer.push_back(sample & 0xFF);
-        currentBuffer.push_back((sample >> 8) & 0xFF);
-    }
-
+    // Optimized buffer accumulation
     if (voicePresent) {
         if (!_inVoiceSegment) {
             _inVoiceSegment = true;
             _samplesSinceVoiceStart = 0;
         }
         _silentSamplesCount = 0;
-        _accumulatedByteBuffer.insert(_accumulatedByteBuffer.end(), currentBuffer.begin(), currentBuffer.end());
-        _samplesSinceVoiceStart += currentBuffer.size();
+
+        // Check if we need to grow the accumulated buffer
+        size_t newSize = _accumulatedByteBuffer.size() + kPlayoutBufferSize;
+        if (_accumulatedByteBuffer.capacity() < newSize) {
+            _accumulatedByteBuffer.reserve(newSize + kPlayoutBufferSize); // Add extra space to reduce reallocations
+        }
         
-        // Check if we've reached 10 seconds while speaking
+        // Use memcpy for faster copying
+        size_t currentSize = _accumulatedByteBuffer.size();
+        _accumulatedByteBuffer.resize(newSize);
+        std::memcpy(_accumulatedByteBuffer.data() + currentSize, playoutBuffer, kPlayoutBufferSize);
+        
+        _samplesSinceVoiceStart += kPlayoutBufferSize;
+        
+        // Check if we've reached target samples
         if (_accumulatedByteBuffer.size() >= kTargetSamples) {
-            RTC_LOG(LS_INFO) << "Pushing " << kTargetSamples/2 
-                            << " samples to Whisper queue (continuous speech)";
+            size_t bytesToWrite = std::min(_accumulatedByteBuffer.size(), kTargetSamples);
             
-            if (!_audioBuffer.write(_accumulatedByteBuffer.data(), kTargetSamples)) {
-                RTC_LOG(LS_WARNING) << "Ring buffer overflow, data lost";
+            if (!_audioBuffer.write(_accumulatedByteBuffer.data(), bytesToWrite)) {
                 handleOverflow();
             }
             
-            // Keep the remainder
-            if (_accumulatedByteBuffer.size() > kTargetSamples) {
-                _accumulatedByteBuffer.erase(_accumulatedByteBuffer.begin(), 
-                                           _accumulatedByteBuffer.begin() + kTargetSamples);
-                _samplesSinceVoiceStart = _accumulatedByteBuffer.size();
+            // Keep remaining data if any
+            if (_accumulatedByteBuffer.size() > bytesToWrite) {
+                size_t remainingSize = _accumulatedByteBuffer.size() - bytesToWrite;
+                std::memmove(_accumulatedByteBuffer.data(), 
+                            _accumulatedByteBuffer.data() + bytesToWrite,
+                            remainingSize);
+                _accumulatedByteBuffer.resize(remainingSize);
+                _samplesSinceVoiceStart = remainingSize;
             } else {
                 _accumulatedByteBuffer.clear();
                 _samplesSinceVoiceStart = 0;
             }
         }
     } else {
-        _silentSamplesCount += currentBuffer.size();
+        _silentSamplesCount += kPlayoutBufferSize;
 
         if (_inVoiceSegment && _silentSamplesCount >= kSilenceSamples) {
             _inVoiceSegment = false;
 
-            // Send buffer if we have enough samples OR if we're in silence after voice
-            if (_accumulatedByteBuffer.size() >= kTargetSamples || 
-                (_accumulatedByteBuffer.size() >= kSampleRate * 2)) { // At least 1 second of speech
+            // Process accumulated buffer if large enough
+            if (_accumulatedByteBuffer.size() >= kSampleRate * 2) {
+                size_t bytesToWrite = std::min(_accumulatedByteBuffer.size(), kTargetSamples);
                 
-                size_t samplesTo = std::min(_accumulatedByteBuffer.size(), kTargetSamples);
-                
-                RTC_LOG(LS_INFO) << "Pushing " << samplesTo/2 
-                                << " samples to Whisper queue (end of speech)";
-                
-                if (!_audioBuffer.write(_accumulatedByteBuffer.data(), samplesTo)) {
-                    RTC_LOG(LS_WARNING) << "Ring buffer overflow, data lost";
+                if (!_audioBuffer.write(_accumulatedByteBuffer.data(), bytesToWrite)) {
                     handleOverflow();
                 }
                 
-                if (_accumulatedByteBuffer.size() > samplesTo) {
-                    _accumulatedByteBuffer.erase(_accumulatedByteBuffer.begin(), 
-                                               _accumulatedByteBuffer.begin() + samplesTo);
-                    _samplesSinceVoiceStart = _accumulatedByteBuffer.size();
-                } else {
-                    _accumulatedByteBuffer.clear();
-                    _samplesSinceVoiceStart = 0;
-                }
+                _accumulatedByteBuffer.clear();
+                _samplesSinceVoiceStart = 0;
             }
             _silentSamplesCount = 0;
         }
@@ -474,6 +495,7 @@ void WhisperTranscriber::handleOverflow() {
 bool WhisperTranscriber::Start() {
     if (!_running) {
         _running = true;
+        _timeMarker = rtc::TimeMillis();
         _processingThread = rtc::PlatformThread::SpawnJoinable(
             [this] {
               while (RunProcessingThread()) {

@@ -39,7 +39,6 @@ public:
         return r;
     }
 
-private:
     enum Status {
         Silent, Loud, Undefined
     };

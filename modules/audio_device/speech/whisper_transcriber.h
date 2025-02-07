@@ -22,14 +22,15 @@
 #include <chrono>
 #include <fstream>
 
-#include "llama_device_base.h"
-#include "whisper_helpers.h"
-
 #include "rtc_base/synchronization/mutex.h"
 #include "rtc_base/platform_thread.h"
 #include "rtc_base/system/file_wrapper.h"
 #include "rtc_base/logging.h"
 #include "api/task_queue/default_task_queue_factory.h"
+
+#include "llama_device_base.h"
+#include "whisper_helpers.h"
+#include "silence_finder.h"
 
 #include "speech_audio_device.h"
 
@@ -79,7 +80,25 @@ class WhisperTranscriber {
   size_t _samplesSinceVoiceStart = 0;
   size_t _silentSamplesCount = 0; // New: Count of silent samples
   void handleOverflow();
+
+  int64_t _timeMarker = 0;
   
+  std::vector<int16_t> _processingBuffer;
+  std::unique_ptr<SilenceFinder<int16_t>> _silenceFinder;
+  
+    // Add new members for voice detection state
+    struct VoiceDetectionState {
+      float lastThreshold = 0.0f;
+      size_t consecutiveVoiceFrames = 0;
+      size_t consecutiveSilenceFrames = 0;
+  } _voiceState;
+
+  // Updated constants
+  static constexpr float voiceStartThreshold = 0.12f;  // Higher threshold to start voice
+  static constexpr float voiceEndThreshold = 0.08f;    // Lower threshold to end voice
+  static constexpr size_t kMinVoiceFrames = 3;
+  static constexpr size_t kMinSilenceFrames = 5;
+
  public:
   WhisperTranscriber(
       SpeechAudioDevice* _speech_audio_device,

@@ -25,12 +25,12 @@
 #include "api/task_queue/default_task_queue_factory.h"
 
 #include "whisper.h"  // Whisper.cpp library header
-#include "espeak_tts.h" // Epeak-ng tts
+#include "espeak_tts.h" // Espeak-ng tts
 #include "whisper_helpers.h"  // Whisper helper code
 
 //#define PLAY_WAV_ON_RECORD 1
 //#define PLAY_WAV_ON_PLAY 1
-//#define LLAMA_ENABLED 1
+#define LLAMA_ENABLED 1
 
 namespace webrtc {
 
