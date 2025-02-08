@@ -1,7 +1,8 @@
 #include "espeak_tts.h"
 #include "rtc_base/logging.h"
 
-ESpeakTTS::ESpeakTTS() {
+ESpeakTTS::ESpeakTTS() 
+    : last_read_time_(std::chrono::steady_clock::now()) {
     espeak_AUDIO_OUTPUT output = AUDIO_OUTPUT_SYNCHRONOUS;
     int Buflength = 500;
     const char* path = NULL;
@@ -32,24 +33,14 @@ ESpeakTTS::ESpeakTTS() {
     espeak_SetSynthCallback(&ESpeakTTS::internalSynthCallback);
 }
 
-ESpeakTTS::~ESpeakTTS() {
-    {
-        std::lock_guard<std::recursive_mutex> lock(mutex_);
-        synthesis_buffer_.clear();
-    }
-    espeak_Terminate();
-}
-
 void ESpeakTTS::synthesize(const char* text, std::vector<short>& buffer) {
     if (!text) return;
 
     RTC_LOG(LS_INFO) << "ESpeakTTS: Starting synthesis of text: '" << text << "'";
     
-    // Clear any previous synthesis data
-    {
-        std::lock_guard<std::recursive_mutex> lock(mutex_);
-        synthesis_buffer_.clear();
-    }
+    // Clear the ring buffer and output buffer
+    ring_buffer_.clear();
+    buffer.clear();
 
     size_t size = strlen(text) + 1;
     unsigned int position = 0, end_position = 0, flags = espeakCHARS_AUTO;
@@ -69,10 +60,15 @@ void ESpeakTTS::synthesize(const char* text, std::vector<short>& buffer) {
         return;
     }
 
-    // Copy the synthesized audio to the output buffer
-    {
-        std::lock_guard<std::recursive_mutex> lock(mutex_);
-        buffer = synthesis_buffer_;
+    // Read all available samples from the ring buffer
+    size_t ring_buffer_size = ring_buffer_.size();
+    if (ring_buffer_size > 0) {
+        buffer.resize(ring_buffer_size);
+        size_t read = ring_buffer_.read(buffer.data(), ring_buffer_size);
+        if (read != ring_buffer_size) {
+            // Resize buffer to actual read size if different
+            buffer.resize(read);
+        }
     }
 
     RTC_LOG(LS_INFO) << "ESpeakTTS: Synthesis complete, buffer size: " << buffer.size();
@@ -86,17 +82,18 @@ int ESpeakTTS::internalSynthCallback(short* wav, int numsamples, espeak_EVENT* e
     ESpeakTTS* context = static_cast<ESpeakTTS*>(events->user_data);
     if (!context) return 0;
 
-    // Directly append to synthesis buffer
-    {
-        std::lock_guard<std::recursive_mutex> lock(context->mutex_);
-        size_t current_size = context->synthesis_buffer_.size();
-        context->synthesis_buffer_.resize(current_size + numsamples);
-        memcpy(context->synthesis_buffer_.data() + current_size, wav, numsamples * sizeof(short));
-    }
-
+    // Write samples to ring buffer
+    context->ring_buffer_.write(wav, numsamples);
+    
+    RTC_LOG(LS_INFO) << "ESpeakTTS: Received " << numsamples << " samples";
     return 0;
 }
 
 int ESpeakTTS::getSampleRate() const {
     return SAMPLE_RATE;
+}
+
+ESpeakTTS::~ESpeakTTS() {
+    ring_buffer_.clear();
+    espeak_Terminate();
 }
