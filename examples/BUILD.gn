@@ -972,18 +972,15 @@ if (!build_with_chromium) {
     # WebRTCsays.ai stuff
     if(rtc_use_speech_audio_devices) {
       lib_dirs = [
-        "../../src/modules/third_party/whisper.cpp/build/src",
-        "../../src/modules/third_party/llama.cpp/build/src",
-        "../../src/modules/third_party/llama.cpp/build/bin",
-        "../../src/modules/third_party/llama.cpp/build/ggml/src",
         "../../src/modules/third_party/espeak-ng/build/src/libespeak-ng",
         "../../src/modules/third_party/espeak-ng/build/src/speechPlayer",
         "../../src/modules/third_party/espeak-ng/build/src/ucd-tools",
-        "../../src/modules/third_party/espeak-ng/build/src/ucd-tools",
         "../../src/modules/third_party/pcaudiolib/src",
+        "../../src/modules/third_party/whillats/build/bin",
       ]
       
       libs = [
+        "whillats",
         "whisper",
         "llama",
         "ggml",
@@ -992,7 +989,7 @@ if (!build_with_chromium) {
         "espeak-ng",
         "speechPlayer",
         "ucd",
-        "pcaudio"
+        "pcaudio",
       ]
       if(is_linux) {
         libs += [
@@ -1006,12 +1003,7 @@ if (!build_with_chromium) {
       else if(is_mac) {
         frameworks = [ "CoreAudio.framework" ]
         ldflags = [
-          # Add rpaths for external libraries. Assuming webrtc_direct built in src/webrtc/src/out/<debug|release>
-          "-Wl,-rpath,@loader_path/../../modules/third_party/whisper.cpp/build/src",  # Relative to the executable
-          "-Wl,-rpath,@loader_path/../../modules/third_party/whisper.cpp/build/ggml/src",  # Relative to the executable
-          "-Wl,-rpath,@loader_path/../../modules/third_party/llama.cpp/build/bin",  # Relative to the executable
-          "-Wl,-rpath,@loader_path/../../modules/third_party/llama.cpp/build/ggml/src",  # Relative to the executable
-          "-Wl,-rpath,@loader_path/../../modules/third_party/pcaudiolib/src",  # Relative to the executable
+          "-Wl,-rpath,@loader_path/../../modules/third_party/whillats/build/bin",  # Relative to the executable
         ]
       }    
     } 

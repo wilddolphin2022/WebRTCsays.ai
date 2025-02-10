@@ -518,25 +518,14 @@ if (!build_with_chromium) {
     sources = [
       "speech/speech_audio_device_factory.cc",
       "speech/speech_audio_device_factory.h",
-      "speech/llama_device_base.cc",
-      "speech/llama_device_base.h",
       "speech/whisper_audio_device.cc",
       "speech/whisper_audio_device.h",
-      "speech/whisper_transcriber.h",
-      "speech/whisper_transcriber.cc",
-      "speech/silence_finder.h",
-      "speech/espeak_tts.h",
-      "speech/espeak_tts.cc",
     ]
     if (rtc_use_speech_audio_devices) {
       defines += [ "WEBRTC_SPEECH_DEVICES" ]
     }
     include_dirs = [
-      "../third_party/llama.cpp/include",
-      "../third_party/whisper.cpp/include",
-      "../third_party/whisper.cpp/ggml/include",
-      "../third_party/espeak-ng/src/include",
-      "../third_party/pcaudiolib/src/include",
+      "../third_party/whillats/src",
     ]
     if(is_mac) {
       libs += [ "pcaudio" ]

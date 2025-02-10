@@ -10,8 +10,6 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "modules/audio_device/speech/whisper_audio_device.h"
-
 #include <string.h>
 #include <cstdio>
 #include <thread>
@@ -24,9 +22,11 @@
 #include "rtc_base/string_utils.h"
 #include "api/task_queue/default_task_queue_factory.h"
 
-#include "whisper.h"  // Whisper.cpp library header
-#include "espeak_tts.h" // Espeak-ng tts
-#include "whisper_helpers.h"  // Whisper helper code
+#include "modules/audio_device/speech/whisper_audio_device.h"
+
+// #include "whisper.h"  // Whisper.cpp library header
+// #include "espeak_tts.h" // Espeak-ng tts
+// #include "whisper_helpers.h"  // Whisper helper code
 
 //#define PLAY_WAV_ON_RECORD 1
 //#define PLAY_WAV_ON_PLAY 1
@@ -90,7 +90,41 @@ bool WhisperAudioDevice::Initialized() const {
   return true;
 }
 
-// Method to add text to the queue in a thread-safe manner
+// trim from start (in place)
+inline void ltrim(std::string &s) {
+  s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+      return !std::isspace(ch);
+  }));
+}
+
+// trim from end (in place)
+inline void rtrim(std::string &s) {
+  s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+      return !std::isspace(ch);
+  }).base(), s.end());
+}
+
+void ttsAudioCallback(bool success, const uint16_t* buffer, size_t buffer_size, void* user_data) {
+  // Handle audio buffer here
+  RTC_LOG(LS_VERBOSE) << "Generated " << buffer_size << " audio samples at " << WhillatsTTS::getSampleRate() << "Hz";
+  if(success) {
+    WhisperAudioDevice* audio_device = static_cast<WhisperAudioDevice*>(user_data);
+    audio_device->SetTTSBuffer(buffer, buffer_size);
+  }
+}
+
+void whisperResponseCallback(bool success, const char* response, void* user_data) {
+  // Handle response here
+  RTC_LOG(LS_VERBOSE) << "Whisper response via callback: " << response;
+  if(success) {
+    WhisperAudioDevice* audio_device = static_cast<WhisperAudioDevice*>(user_data);
+    if(audio_device->_llaming)
+      audio_device->askLlama(std::string(response));
+    else  
+      audio_device->speakText(std::string(response));
+  }
+}
+
 void WhisperAudioDevice::speakText(const std::string& text) {
   if(_tts) {
     std::lock_guard<std::mutex> lock(_queueMutex);
@@ -106,7 +140,7 @@ void WhisperAudioDevice::speakText(const std::string& text) {
 void WhisperAudioDevice::askLlama(const std::string& text) {
 #if defined(LLAMA_ENABLED)
   if(_llama_device) {
-     _llama_device->askLlama(text); // send to llama text queue
+     _llama_device->askLlama(text.c_str()); // send to llama text queue
   }  
 #endif  
 }
@@ -269,7 +303,7 @@ bool WhisperAudioDevice::RecThreadProcess() {
     if (shouldSynthesize || !_ttsBuffer.empty()) {  // Handle both new synthesis and existing audio in _ttsBuffer
       if (shouldSynthesize && _ttsBuffer.empty()) {  // Synthesize only if there's new text and no remaining audio
         RTC_LOG(LS_INFO) << "TTS text: " << textToSpeak;
-        _tts->synthesize(textToSpeak.c_str(), _ttsBuffer);  // Populate ttsBuffer here
+        //_tts->synthesize(textToSpeak.c_str(), _ttsBuffer);  // Populate ttsBuffer here
 
         if (_ttsBuffer.empty()) {
           RTC_LOG(LS_WARNING) << "TTS buffer is empty after synthesis.";
@@ -385,21 +419,28 @@ int32_t WhisperAudioDevice::InitPlayout() {
   }
 
   if(!_whisperModelFilename.empty()) {
-    RTC_LOG(LS_INFO) << "Whisper model: '" << _whisperModelFilename << "'";
-    _whisper_transcriber.reset(new WhisperTranscriber(this, _task_queue_factory, _whisperModelFilename));
-    _whisper_transcriber->Start();
+
+    RTC_LOG(LS_VERBOSE) << "Whisper model: '" << _whisperModelFilename << "'";
+    WhillatsSetResponseCallback whisperCallback(whisperResponseCallback, this);
+    _whisper_transcriber.reset(new WhillatsTranscriber(_whisperModelFilename.c_str(), whisperCallback));
+
+    _whisper_transcriber->start();
     _whispering = true;
+  } 
 
-    #if defined (LLAMA_ENABLED)
-    _llama_device.reset(new LlamaDeviceBase(this, _llamaModelFilename));
-    _llama_device->Start();
-    _llaming = true;
-    #else
-    _llaming = false;
-    #endif // LLAMA ENABLED
+  #if defined (LLAMA_ENABLED)
+  RTC_LOG(LS_VERBOSE) << "Llama model: '" << _llamaModelFilename << "'";
+  WhillatsSetResponseCallback llamaCallback(whisperResponseCallback, this);
+  _llama_device.reset(new WhillatsLlama(_llamaModelFilename.c_str(), llamaCallback));
 
-    _tts.reset(new ESpeakTTS());
-  }
+  _llama_device->start();
+  _llaming = true;
+  #else
+  _llaming = false;
+  #endif // LLAMA ENABLED
+
+  WhillatsSetAudioCallback ttsCallback(ttsAudioCallback, this);
+  _tts.reset(new WhillatsTTS(ttsCallback));
 
   _playoutFramesIn10MS = static_cast<size_t>(kPlayoutFixedSampleRate / 100);
 
@@ -474,11 +515,11 @@ int32_t WhisperAudioDevice::StopPlayout() {
     _ptrThreadPlay.Finalize();
 
   if(_llama_device) {
-    _llama_device->Stop();    
+    _llama_device->stop();    
   }
 
   if (_whisper_transcriber) {
-      _whisper_transcriber->Stop();
+      _whisper_transcriber->stop();
   }  
 
   MutexLock lock(&mutex_);
@@ -524,8 +565,8 @@ bool WhisperAudioDevice::PlayThreadProcess() {
     #endif // defined(PLAY_WAV_ON_PLAY)
 
     if(_whisper_transcriber)
-      _whisper_transcriber->ProcessAudioBuffer((uint8_t*)_playoutBuffer, kPlayoutBufferSize);
-
+      _whisper_transcriber->processAudioBuffer((uint8_t*)_playoutBuffer, kPlayoutBufferSize);
+ 
     _lastCallPlayoutMillis = currentTime;
   }
 
