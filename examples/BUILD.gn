@@ -972,10 +972,6 @@ if (!build_with_chromium) {
     # WebRTCsays.ai stuff
     if(rtc_use_speech_audio_devices) {
       lib_dirs = [
-        "../../src/modules/third_party/espeak-ng/build/src/libespeak-ng",
-        "../../src/modules/third_party/espeak-ng/build/src/speechPlayer",
-        "../../src/modules/third_party/espeak-ng/build/src/ucd-tools",
-        "../../src/modules/third_party/pcaudiolib/src",
         "../../src/modules/third_party/whillats/build/bin",
       ]
       
@@ -986,10 +982,6 @@ if (!build_with_chromium) {
         "ggml",
         "ggml-base",
         "ggml-cpu",
-        "espeak-ng",
-        "speechPlayer",
-        "ucd",
-        "pcaudio",
       ]
       if(is_linux) {
         libs += [

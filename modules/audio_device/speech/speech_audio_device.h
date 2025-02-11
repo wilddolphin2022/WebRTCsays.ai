@@ -22,6 +22,7 @@ class SpeechAudioDevice : public webrtc::AudioDeviceGeneric {
 
   bool _whispering = false;
   bool _llaming = false;
+  bool _ttsing = false;
 
   virtual ~SpeechAudioDevice() {}
 };

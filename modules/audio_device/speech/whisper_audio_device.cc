@@ -24,10 +24,6 @@
 
 #include "modules/audio_device/speech/whisper_audio_device.h"
 
-// #include "whisper.h"  // Whisper.cpp library header
-// #include "espeak_tts.h" // Espeak-ng tts
-// #include "whisper_helpers.h"  // Whisper helper code
-
 //#define PLAY_WAV_ON_RECORD 1
 //#define PLAY_WAV_ON_PLAY 1
 #define LLAMA_ENABLED 1
@@ -277,6 +273,10 @@ int32_t WhisperAudioDevice::StopRecording() {
   return 0;
 }
 
+void WhisperAudioDevice::SetTTSBuffer(const uint16_t* buffer, size_t buffer_size) { 
+  _ttsBuffer = std::vector<uint16_t>(buffer, buffer + buffer_size); 
+}
+
 bool WhisperAudioDevice::RecThreadProcess() {
   if (!_recording) {
     return false;
@@ -291,7 +291,7 @@ bool WhisperAudioDevice::RecThreadProcess() {
     // if transcribing, pop text
     bool shouldSynthesize = false;
     std::string textToSpeak;
-    if(_tts) {
+    if(_tts && _ttsing) {
       std::unique_lock<std::mutex> lock(_queueMutex);
       if (!_textQueue.empty()) {
         textToSpeak = _textQueue.front();
@@ -300,49 +300,36 @@ bool WhisperAudioDevice::RecThreadProcess() {
       }
     }
 
-    if (shouldSynthesize || !_ttsBuffer.empty()) {  // Handle both new synthesis and existing audio in _ttsBuffer
-      if (shouldSynthesize && _ttsBuffer.empty()) {  // Synthesize only if there's new text and no remaining audio
-        RTC_LOG(LS_INFO) << "TTS text: " << textToSpeak;
-        //_tts->synthesize(textToSpeak.c_str(), _ttsBuffer);  // Populate ttsBuffer here
+    // If there's new text, send it for synthesis without checking buffer
+    if (shouldSynthesize) {
+      RTC_LOG(LS_INFO) << "TTS text: " << textToSpeak;
+      _tts->queueText(textToSpeak.c_str());
+    }
 
-        if (_ttsBuffer.empty()) {
-          RTC_LOG(LS_WARNING) << "TTS buffer is empty after synthesis.";
-        } else {
-          RTC_LOG(LS_VERBOSE) << "TTS buffer size: " << _ttsBuffer.size();
-        }
+    // Handle audio buffer independently
+    if (!_ttsBuffer.empty()) {
+      size_t samplesToCopy = std::min(_recordingFramesIn10MS, _ttsBuffer.size() - _ttsIndex);
+      memcpy(_recordingBuffer, &_ttsBuffer[_ttsIndex], samplesToCopy * sizeof(short));
+      _ttsIndex += samplesToCopy;
+
+      // Fill the rest of _recordingBuffer with zeros if needed
+      if (samplesToCopy < _recordingFramesIn10MS) {
+        memset(_recordingBuffer + samplesToCopy * sizeof(short), 0, 
+               (_recordingFramesIn10MS - samplesToCopy) * sizeof(short));
       }
 
-      // Process audio from _ttsBuffer
-      if (!_ttsBuffer.empty()) {
-        size_t samplesToCopy = std::min(_recordingFramesIn10MS, _ttsBuffer.size() - _ttsIndex);
-        memcpy(_recordingBuffer, &_ttsBuffer[_ttsIndex], samplesToCopy * sizeof(short));
-        _ttsIndex += samplesToCopy;
+      mutex_.Unlock();
+      _ptrAudioBuffer->SetRecordedBuffer(_recordingBuffer, _recordingFramesIn10MS);
+      _ptrAudioBuffer->DeliverRecordedData();
+      mutex_.Lock();
 
-        // Fill the rest of _recordingBuffer with zeros if needed
-        if (samplesToCopy < _recordingFramesIn10MS) {
-          memset(_recordingBuffer + samplesToCopy * sizeof(short), 0, (_recordingFramesIn10MS - samplesToCopy) * sizeof(short));
-        }
-
-        mutex_.Unlock();
-        _ptrAudioBuffer->SetRecordedBuffer(_recordingBuffer, _recordingFramesIn10MS);
-        _ptrAudioBuffer->DeliverRecordedData();
-        mutex_.Lock();
-
-        // Reset ttsIndex if we've gone through all the TTS audio
-        if (_ttsIndex >= _ttsBuffer.size()) {
-          _ttsIndex = 0;
-          _ttsBuffer.clear();  // Clear for next synthesis
-        }
-      } else {
-        // If no audio to send, send silence
-        memset(_recordingBuffer, 0, _recordingFramesIn10MS * sizeof(short));
-        mutex_.Unlock();
-        _ptrAudioBuffer->SetRecordedBuffer(_recordingBuffer, _recordingFramesIn10MS);
-        _ptrAudioBuffer->DeliverRecordedData();
-        mutex_.Lock();
+      // Reset ttsIndex if we've gone through all the TTS audio
+      if (_ttsIndex >= _ttsBuffer.size()) {
+        _ttsIndex = 0;
+        _ttsBuffer.clear();  // Clear for next synthesis
       }
     } else {
-      // If no TTS audio and no new text, you might want to handle this case with silence or previous audio
+      // If no audio to send, send silence
       memset(_recordingBuffer, 0, _recordingFramesIn10MS * sizeof(short));
       mutex_.Unlock();
       _ptrAudioBuffer->SetRecordedBuffer(_recordingBuffer, _recordingFramesIn10MS);
@@ -424,8 +411,9 @@ int32_t WhisperAudioDevice::InitPlayout() {
     WhillatsSetResponseCallback whisperCallback(whisperResponseCallback, this);
     _whisper_transcriber.reset(new WhillatsTranscriber(_whisperModelFilename.c_str(), whisperCallback));
 
-    _whisper_transcriber->start();
-    _whispering = true;
+    if(_whisper_transcriber && _whisper_transcriber->start()) {
+      _whispering = true;
+    }
   } 
 
   #if defined (LLAMA_ENABLED)
@@ -433,14 +421,18 @@ int32_t WhisperAudioDevice::InitPlayout() {
   WhillatsSetResponseCallback llamaCallback(whisperResponseCallback, this);
   _llama_device.reset(new WhillatsLlama(_llamaModelFilename.c_str(), llamaCallback));
 
-  _llama_device->start();
-  _llaming = true;
+  if(_llama_device &&  _llama_device->start()) {
+    _llaming = true;
+  }
   #else
   _llaming = false;
   #endif // LLAMA ENABLED
 
   WhillatsSetAudioCallback ttsCallback(ttsAudioCallback, this);
   _tts.reset(new WhillatsTTS(ttsCallback));
+  if(_tts && _tts->start()) {
+    _ttsing = true;
+  }
 
   _playoutFramesIn10MS = static_cast<size_t>(kPlayoutFixedSampleRate / 100);
 

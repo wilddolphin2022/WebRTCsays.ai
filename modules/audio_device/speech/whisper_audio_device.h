@@ -26,13 +26,7 @@
 #include "rtc_base/time_utils.h"
 
 #include "speech_audio_device.h"
-#include "whillats.h" // whillats project
-
-// struct whisper_context;
-
-// #include "llama_device_base.h"  // Whisper Audio base
-// #include "whisper_transcriber.h"  // Whisper Transcriber
-// #include "espeak_tts.h" // Epeak-ng tts
+#include "whillats.h" // whillats project - Whisper, Llama, Espeak TTS
 
 namespace webrtc {
 
@@ -139,7 +133,7 @@ class WhisperAudioDevice : public SpeechAudioDevice {
 
   void OnDataReady(const std::vector<short>& audioData);
 
-  void SetTTSBuffer(const uint16_t* buffer, size_t buffer_size) { _ttsBuffer = std::vector<uint16_t>(buffer, buffer + buffer_size); }
+  void SetTTSBuffer(const uint16_t* buffer, size_t buffer_size);
 
  private:
   bool RecThreadProcess();

@@ -11,8 +11,6 @@
  */
 
 #include "utils.h"
-#include <espeak-ng/espeak_ng.h>
-#include <espeak-ng/speak_lib.h>
 
 #if defined(WEBRTC_LINUX)
 extern "C" { void __libc_csu_init() {} void __libc_csu_fini() {} }
@@ -232,57 +230,4 @@ std::string getUsage(const Options opts) {
   usage << "IP Address: " << opts.address << "\n";
 
   return usage.str();
-}
-
-// Global promise for speech completion
-static std::promise<void>* g_completion_promise = nullptr;
-
-int SynthCallback(short* wav, int numsamples, espeak_EVENT* events) {
-    if (events && events->type == espeakEVENT_MSG_TERMINATED) {
-        if (g_completion_promise) {
-            g_completion_promise->set_value();
-        }
-    }
-    return 0;  // Continue synthesis
-}
-
-void speakString(const std::string& s) {
-    std::promise<void> completion_promise;
-    std::future<void> completion_future = completion_promise.get_future();
-    g_completion_promise = &completion_promise;
-
-    int esOK = espeak_Initialize(AUDIO_OUTPUT_PLAYBACK, 0, nullptr, 0);
-    if(esOK == EE_INTERNAL_ERROR) {
-        RTC_LOG(LS_ERROR) << "Failed to initialize espeak-ng";
-        g_completion_promise = nullptr;
-        return;
-    }
-
-    espeak_SetSynthCallback(SynthCallback);
-
-    espeak_VOICE voice;
-    memset(&voice, 0, sizeof(espeak_VOICE));
-    voice.languages = "en";
-    voice.name = "US";
-    voice.variant = 1;
-    voice.gender = 1;
-    espeak_SetVoiceByProperties(&voice);
-
-    espeak_SetParameter(espeakRATE, 150, 0);
-    espeak_SetParameter(espeakVOLUME, 100, 0);
-    espeak_SetParameter(espeakPITCH, 50, 0);
-    espeak_SetParameter(espeakRANGE, 50, 0);
-
-    int synth_flags = espeakCHARS_AUTO | espeakENDPAUSE;
-    esOK = espeak_Synth(s.c_str(), s.length() + 1, 0, POS_CHARACTER, 0, synth_flags, nullptr, nullptr);
-    
-    if (esOK != EE_OK) {
-        RTC_LOG(LS_ERROR) << "Speech synthesis failed";
-        g_completion_promise = nullptr;
-        return;
-    }
-
-    // Wait for completion
-    completion_future.wait();
-    g_completion_promise = nullptr;
 }

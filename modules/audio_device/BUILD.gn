@@ -528,7 +528,6 @@ if (!build_with_chromium) {
       "../third_party/whillats/src",
     ]
     if(is_mac) {
-      libs += [ "pcaudio" ]
       frameworks = [
         "Accelerate.framework",
         "Metal.framework",
