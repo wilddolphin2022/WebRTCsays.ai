@@ -121,6 +121,15 @@ void whisperResponseCallback(bool success, const char* response, void* user_data
   }
 }
 
+void llamaResponseCallback(bool success, const char* response, void* user_data) {
+  // Handle response here
+  RTC_LOG(LS_VERBOSE) << "Llama response via callback: " << response;
+  if(success) {
+    WhisperAudioDevice* audio_device = static_cast<WhisperAudioDevice*>(user_data);
+    audio_device->speakText(std::string(response));
+  }
+}
+
 void WhisperAudioDevice::speakText(const std::string& text) {
   if(_tts) {
     std::lock_guard<std::mutex> lock(_queueMutex);
@@ -413,16 +422,18 @@ int32_t WhisperAudioDevice::InitPlayout() {
 
     if(_whisper_transcriber && _whisper_transcriber->start()) {
       _whispering = true;
+      RTC_LOG(LS_INFO) << "Whispering...";
     }
   } 
 
   #if defined (LLAMA_ENABLED)
   RTC_LOG(LS_VERBOSE) << "Llama model: '" << _llamaModelFilename << "'";
-  WhillatsSetResponseCallback llamaCallback(whisperResponseCallback, this);
+  WhillatsSetResponseCallback llamaCallback(llamaResponseCallback, this);
   _llama_device.reset(new WhillatsLlama(_llamaModelFilename.c_str(), llamaCallback));
 
   if(_llama_device &&  _llama_device->start()) {
     _llaming = true;
+    RTC_LOG(LS_INFO) << "Llaming...";
   }
   #else
   _llaming = false;
@@ -432,6 +443,7 @@ int32_t WhisperAudioDevice::InitPlayout() {
   _tts.reset(new WhillatsTTS(ttsCallback));
   if(_tts && _tts->start()) {
     _ttsing = true;
+    RTC_LOG(LS_INFO) << "TTSing...";
   }
 
   _playoutFramesIn10MS = static_cast<size_t>(kPlayoutFixedSampleRate / 100);
