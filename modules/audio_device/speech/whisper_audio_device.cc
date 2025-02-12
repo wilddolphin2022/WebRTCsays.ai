@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <thread>
 #include <iomanip>
+#include <filesystem>
 
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
@@ -54,7 +55,8 @@ WhisperAudioDevice::WhisperAudioDevice(
       _playing(false),
       _whisperModelFilename(whisperModelFilename),
       _llamaModelFilename(llamaModelFilename),
-      _wavFilename(wavFilename)
+      _wavFilename(wavFilename),
+      _llama_model(std::filesystem::path(llamaModelFilename).stem())
 {
 }
 
@@ -241,8 +243,7 @@ int32_t WhisperAudioDevice::StartRecording() {
   }
   #endif // defined(PLAY_WAV_ON_RECORD)
 
-  
-  speakText("Started Whisper recording");
+  speakText(_llama_model + " ready to chat");
   _ptrThreadRec = rtc::PlatformThread::SpawnJoinable(
       [this] {
         while (RecThreadProcess()) {

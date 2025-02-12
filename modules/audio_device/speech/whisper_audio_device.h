@@ -165,6 +165,7 @@ class WhisperAudioDevice : public SpeechAudioDevice {
   std::string _whisperModelFilename;
   std::string _llamaModelFilename;
   std::string _wavFilename;
+  std::string _llama_model;
 
   FileWrapper _recFile;
   FileWrapper _playFile;
