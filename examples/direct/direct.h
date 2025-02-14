@@ -61,6 +61,8 @@
 #include "modules/audio_device/speech/speech_audio_device_factory.h"
 #endif
 
+#include "utils.h"
+
 class LambdaCreateSessionDescriptionObserver
     : public webrtc::CreateSessionDescriptionObserver {
 public:
@@ -113,7 +115,7 @@ class LambdaSetRemoteDescriptionObserver
 
 class DirectApplication {
 public:
-    DirectApplication();
+    DirectApplication(Options opts);
     virtual ~DirectApplication();
 
     // Initialize threads and basic WebRTC infrastructure
@@ -122,8 +124,14 @@ public:
     // Run the application event loop
     void Run();
     
+     virtual void Start() {}
+   
+    virtual void Shutdown() {}
+
     //rtc::VirtualSocketServer* vss() { return vss_.get(); }
     rtc::PhysicalSocketServer* pss() { return pss_.get(); }
+
+    virtual bool InitializeSocket() { return true; }
 
 protected:
     // Thread getters for derived classes
@@ -160,8 +168,143 @@ protected:
     std::unique_ptr<rtc::AsyncTCPSocket> tcp_socket_;
 
     std::atomic<bool> should_quit_{false};
+
+    // Add these members
+    static constexpr int kMaxReconnectAttempts = 5;
+    static constexpr int kReconnectDelayMs = 1000;
+    int reconnect_attempts_ = 0;
+    bool should_reconnect_ = true;
+
+    // Add this method
+    virtual bool CheckConnection(rtc::AsyncPacketSocket* socket);
+    virtual bool RestartConnection();
+
+    Options opts_;
+    bool is_caller() const { return opts_.is_caller; }
+
+    // Update to use AsyncPacketSocket's built-in signals
+    void OnSocketStateChange(rtc::AsyncPacketSocket* socket, rtc::AsyncPacketSocket::State state) {
+        if (state == rtc::AsyncPacketSocket::STATE_CLOSED) {
+            RTC_LOG(LS_INFO) << "Socket closed, handling disconnect";
+            HandleDisconnect();
+        }
+    }
+
+    // Base class virtual method declaration
+    virtual void OnMessage(rtc::AsyncPacketSocket* socket,
+                         const unsigned char* data,
+                         size_t len,
+                         const rtc::SocketAddress& remote_addr) {
+        std::string message((const char*)data, len);
+        HandleMessage(socket, message, remote_addr);
+    }
+
+    // Add socket close subscription
+    void SetupSocket(rtc::AsyncTCPSocket* socket) {
+        if (!socket) return;
+        
+        // All socket operations must be on network thread
+        if (!network_thread()->IsCurrent()) {
+            network_thread()->PostTask([this, socket]() {
+                SetupSocket(socket);
+            });
+            return;
+        }
+        
+        socket->RegisterReceivedPacketCallback(
+            [this](rtc::AsyncPacketSocket* socket, const rtc::ReceivedPacket& packet) {
+                // Ensure callback is handled on network thread
+                if (!network_thread()->IsCurrent()) {
+                    network_thread()->PostTask([this, socket, packet]() {
+                        this->OnMessage(socket, packet.payload().data(), packet.payload().size(), 
+                                      packet.source_address());
+                    });
+                    return;
+                }
+                this->OnMessage(socket, packet.payload().data(), packet.payload().size(), 
+                              packet.source_address());
+            });
+
+        socket->SubscribeCloseEvent(
+            this,
+            [this](rtc::AsyncPacketSocket* s, int err) {
+                // Ensure close handling is on network thread
+                if (!network_thread()->IsCurrent()) {
+                    network_thread()->PostTask([this]() {
+                        this->HandleDisconnect();
+                    });
+                    return;
+                }
+                this->HandleDisconnect();
+            });
+    }
+
+    // Add atomic flag to prevent re-entrance and track state
+    std::atomic<bool> handling_disconnect_{false};
+    std::atomic<bool> is_disconnected_{false};
+
+    virtual void HandleDisconnect() {
+        // Ensure we're on the network thread
+        if (!network_thread()->IsCurrent()) {
+            network_thread()->PostTask([this]() {
+                HandleDisconnect();
+            });
+            return;
+        }
+
+        // Prevent re-entrance
+        bool expected = false;
+        if (!handling_disconnect_.compare_exchange_strong(expected, true)) {
+            RTC_LOG(LS_INFO) << "Already handling disconnect, skipping";
+            return;
+        }
+
+        if (is_disconnected_) {
+            RTC_LOG(LS_INFO) << "Already disconnected, skipping";
+            handling_disconnect_ = false;
+            return;
+        }
+
+        RTC_LOG(LS_INFO) << "Connection lost, handling disconnect...";
+        is_disconnected_ = true;
+        
+        if (tcp_socket_) {
+            tcp_socket_->DeregisterReceivedPacketCallback();
+            tcp_socket_->UnsubscribeCloseEvent(this);
+            tcp_socket_->Close();
+            tcp_socket_ = nullptr;
+        }
+
+        handling_disconnect_ = false;
+
+        if (!should_reconnect_) {
+            RTC_LOG(LS_INFO) << "Reconnection disabled, stopping...";
+            return;
+        }
+
+        // For callee, don't attempt reconnection - just wait for new connections
+        if (!is_caller()) {
+            RTC_LOG(LS_INFO) << "Callee waiting for new connections...";
+            return;
+        }
+
+        // Only caller attempts reconnection
+        if (reconnect_attempts_ < kMaxReconnectAttempts) {
+            reconnect_attempts_++;
+            network_thread()->PostDelayedTask(
+                [this]() {
+                    if (RestartConnection()) {
+                        reconnect_attempts_ = 0;
+                        is_disconnected_ = false;
+                    }
+                },
+                webrtc::TimeDelta::Millis(kReconnectDelayMs));
+        } else {
+            RTC_LOG(LS_ERROR) << "Max reconnection attempts reached";
+        }
+    }
+
 private:
-    //std::unique_ptr<rtc::VirtualSocketServer> vss_;
     std::unique_ptr<rtc::Thread> main_thread_;
 
     // WebRTC threads
@@ -177,15 +320,12 @@ private:
 class DirectPeer : public DirectApplication,
                   public webrtc::PeerConnectionObserver {
 public:
-    DirectPeer(
-        const bool is_caller = true, 
-        const bool enable_encryption = true,
-        const bool enable_video = false,
-        const bool enable_whisper = false
-    );
+    DirectPeer(Options opts);
     ~DirectPeer() override;
 
-    void Start();
+    virtual void Start() override;
+
+    virtual void Shutdown() override;
 
     // Override DirectApplication methods
     virtual void HandleMessage(rtc::AsyncPacketSocket* socket,
@@ -194,11 +334,8 @@ public:
     
     virtual bool SendMessage(const std::string& message) override;
     
-    virtual void SetEnableEncryption(const bool enable_video) { enable_video_ = enable_video; }
-    virtual void SetEnableVideo(const bool enable_video) { enable_video_ = enable_video; }
-    virtual void SetEnableWhisper(const bool enable_whisper) { enable_whisper_ = enable_whisper; }
-    virtual void SetWhisperModel(const std::string& whisper_model) { ::setenv("WHISPER_MODEL", whisper_model.c_str(), true); }
-    virtual void SetLlamaModel(const std::string& llama_model) { ::setenv("LLAMA_MODEL", llama_model.c_str(), true); }
+    virtual void SetWhisperModel(const std::string& whisper_model) { ::setenv("WHISPER_MODEL", opts_.whisper_model.c_str(), true); }
+    virtual void SetLlamaModel(const std::string& llama_model) { ::setenv("LLAMA_MODEL", opts_.llama_model.c_str(), true); }
 
     // PeerConnectionObserver implementation
     void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState new_state) override;
@@ -213,13 +350,15 @@ public:
     void OnIceConnectionReceivingChange(bool receiving) override;
 
 protected:
-    void Shutdown();
-    bool is_caller() const { return is_caller_; }
     webrtc::PeerConnectionInterface* peer_connection() const { return peer_connection_.get(); }
 
      // Session description methods
     void SetRemoteDescription(const std::string& sdp);
     void AddIceCandidate(const std::string& candidate_sdp);
+
+    // Add these declarations
+    virtual void HandleDisconnect() override;
+    virtual bool RestartConnection() override;
 
 private:
     rtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
@@ -231,23 +370,13 @@ private:
 
     rtc::scoped_refptr<LambdaCreateSessionDescriptionObserver> create_session_observer_;
     rtc::scoped_refptr<LambdaSetLocalDescriptionObserver> set_local_description_observer_;
-    rtc::scoped_refptr<LambdaSetRemoteDescriptionObserver> set_remote_description_observer_;
-    
-    bool is_caller_ = false;
-    bool enable_encryption_ = false;
-    bool enable_video_ = false;
-    bool enable_whisper_ = false;
+    rtc::scoped_refptr<LambdaSetRemoteDescriptionObserver> set_remote_description_observer_;    
 };
 
 class DirectCallee : public DirectPeer,
                     public sigslot::has_slots<> {
 public:
-    explicit DirectCallee(
-        const int local_port,
-        const bool enable_encryption = false,
-        const bool enable_video = false,
-        const bool enable_whisper = false
-        );
+    explicit DirectCallee(Options opts);
     ~DirectCallee() override;
 
     // Start listening for incoming connections
@@ -259,22 +388,15 @@ private:
     void OnMessage(rtc::AsyncPacketSocket* socket,
                   const unsigned char* data,
                   size_t len,
-                  const rtc::SocketAddress& remote_addr);
+                  const rtc::SocketAddress& remote_addr) override;
 
-    int local_port_;
-    //std::unique_ptr<rtc::AsyncTCPSocket> tcp_socket_;
     std::unique_ptr<rtc::AsyncTcpListenSocket> listen_socket_;  // Changed to unique_ptr
 };
 
 class DirectCaller : public DirectPeer, 
                     public sigslot::has_slots<> {
 public:
-    explicit DirectCaller(
-        const rtc::SocketAddress& remote_addr,
-        const bool enable_encryption = false,
-        const bool enable_video = false,
-        const bool enable_whisper = false
-        );
+    explicit DirectCaller(Options opts);
     ~DirectCaller() override;
 
     // Connect and send messages
@@ -286,13 +408,12 @@ private:
     void OnMessage(rtc::AsyncPacketSocket* socket,
                   const unsigned char* data,
                   size_t len,
-                  const rtc::SocketAddress& remote_addr);
+                  const rtc::SocketAddress& remote_addr) override;
 
     // Called when connection is established
     void OnConnect(rtc::AsyncPacketSocket* socket);
 
     rtc::SocketAddress remote_addr_;
-    //std::unique_ptr<rtc::AsyncTCPSocket> tcp_socket_;
 };
 
 #endif  // WEBRTC_DIRECT_DIRECT_H_

@@ -14,19 +14,10 @@
 #include "direct.h"
 #include "utils.h"
 
-DirectPeer::DirectPeer(
-    const bool is_caller, 
-    const bool enable_encryption,
-    const bool enable_video,
-    const bool enable_whisper
-) : DirectApplication(), 
+DirectPeer::DirectPeer(Options opts) : DirectApplication(opts), 
     peer_connection_(nullptr), 
     network_manager_(std::make_unique<rtc::BasicNetworkManager>(pss())),
-    socket_factory_(std::make_unique<rtc::BasicPacketSocketFactory>(pss())),
-    is_caller_(is_caller),
-    enable_encryption_(enable_encryption),
-    enable_video_(enable_video),
-    enable_whisper_(enable_whisper)
+    socket_factory_(std::make_unique<rtc::BasicPacketSocketFactory>(pss()))
 {
 }
 
@@ -34,249 +25,290 @@ DirectPeer::~DirectPeer() {
 }
 
 void DirectPeer::Shutdown() {
-    // Clear observers first
+    // Clear all state first
+    pending_ice_candidates_.clear();
+    ice_candidates_sent_ = 0;
+    ice_candidates_received_ = 0;
+    sdp_fragments_sent_ = 0;
+    sdp_fragments_received_ = 0;
+    
+    // Clear observers
     create_session_observer_ = nullptr;
     set_local_description_observer_ = nullptr;
     
     // Clear peer connection
     if (peer_connection_) {
         peer_connection_->Close();
+        peer_connection_ = nullptr;
     }
-    peer_connection_ = nullptr;
     
     // Clear factory after peer connection
     peer_connection_factory_ = nullptr;
     
     // Clear remaining members
     audio_device_module_ = nullptr;
-    network_manager_.reset();
-    socket_factory_.reset();
+    
+    // Don't reset network_manager_ and socket_factory_ here
+    // They are needed for reconnection
 }
 
 void DirectPeer::Start() {
+    signaling_thread()->PostTask([this]() {
+        // Load certificate first if encryption is enabled
+        rtc::scoped_refptr<rtc::RTCCertificate> certificate;
+        if (opts_.encryption) {
+            certificate = LoadCertificateFromEnv();
+            if (!certificate) {
+                RTC_LOG(LS_ERROR) << "Failed to load certificate for encryption";
+                network_thread()->PostTask([this]() {
+                    SendMessage("BYE");
+                    if (tcp_socket_) {
+                        tcp_socket_->Close();
+                    }
+                });
+                return;
+            }
+            RTC_LOG(LS_INFO) << "Certificate loaded successfully";
+        }
 
-  signaling_thread()->PostTask([this]() {
+        // Recreate network manager and socket factory if needed
+        if (!network_manager_) {
+            network_manager_ = std::make_unique<rtc::BasicNetworkManager>(pss());
+        }
+        if (!socket_factory_) {
+            socket_factory_ = std::make_unique<rtc::BasicPacketSocketFactory>(pss());
+        }
 
-    webrtc::PeerConnectionFactoryDependencies deps;
-    deps.network_thread = network_thread();
-    deps.worker_thread = worker_thread();
-    deps.signaling_thread = signaling_thread();
+        webrtc::PeerConnectionFactoryDependencies deps;
+        deps.network_thread = network_thread();
+        deps.worker_thread = worker_thread();
+        deps.signaling_thread = signaling_thread();
 
 #ifdef WEBRTC_SPEECH_DEVICES    
-    if(enable_whisper_) {
-        RTC_LOG(LS_INFO) << "whisper is enabled!";
+        if(opts_.whisper) {
+            RTC_LOG(LS_INFO) << "whisper is enabled!";
 
-        deps.task_queue_factory.reset(webrtc::CreateDefaultTaskQueueFactory().release());
-        audio_device_module_ = deps.worker_thread->BlockingCall([&]() -> rtc::scoped_refptr<webrtc::AudioDeviceModule> {
-            auto adm = webrtc::AudioDeviceModule::Create(
-                webrtc::AudioDeviceModule::kSpeechAudio, 
-                deps.task_queue_factory.get()
-                );
-            if (adm) {
-                RTC_LOG(LS_INFO) << "Audio device module created successfully";                
-            }
-            return adm;
-        });
-
-        if (!audio_device_module_) {
-            RTC_LOG(LS_ERROR) << "Failed to create audio device module";
-            return;
-        }
-    }
-#endif
-
-    peer_connection_factory_ = webrtc::CreatePeerConnectionFactory(
-        deps.network_thread,
-        deps.worker_thread,
-        deps.signaling_thread,
-        audio_device_module_, 
-        webrtc::CreateBuiltinAudioEncoderFactory(),
-        webrtc::CreateBuiltinAudioDecoderFactory(),
-        enable_video_ ? std::make_unique<webrtc::VideoEncoderFactoryTemplate<
-            webrtc::LibvpxVp8EncoderTemplateAdapter,
-            webrtc::LibvpxVp9EncoderTemplateAdapter,
-            webrtc::OpenH264EncoderTemplateAdapter,
-            webrtc::LibaomAv1EncoderTemplateAdapter>>() : nullptr,
-        enable_video_ ? std::make_unique<webrtc::VideoDecoderFactoryTemplate<
-            webrtc::LibvpxVp8DecoderTemplateAdapter,
-            webrtc::LibvpxVp9DecoderTemplateAdapter,
-            webrtc::OpenH264DecoderTemplateAdapter,
-            webrtc::Dav1dDecoderTemplateAdapter>>() : nullptr,
-        nullptr, nullptr);
-
-
-    webrtc::PeerConnectionInterface::RTCConfiguration config;
-    config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
-    if(enable_encryption_) {
-        RTC_LOG(LS_INFO) << "Encryption is enabled!";
-        auto certificate = LoadCertificateFromEnv();
-        config.certificates.push_back(certificate);
-    } else {
-        // WARNING! FOLLOWING CODE IS FOR DEBUG ONLY!
-        webrtc::PeerConnectionFactory::Options options = {};
-        options.disable_encryption = true;
-        peer_connection_factory_->SetOptions(options);
-        // END OF WARNING
-    }
-
-    config.type = webrtc::PeerConnectionInterface::IceTransportsType::kAll;
-    config.rtcp_mux_policy = webrtc::PeerConnectionInterface::kRtcpMuxPolicyRequire;
-    config.enable_ice_renomination = false;
-    config.ice_candidate_pool_size = 0;
-    config.continual_gathering_policy = 
-        webrtc::PeerConnectionInterface::ContinualGatheringPolicy::GATHER_ONCE;
-    config.ice_connection_receiving_timeout = 1000;
-    config.ice_backup_candidate_pair_ping_interval = 2000;
-
-    cricket::ServerAddresses stun_servers;
-    std::vector<cricket::RelayServerConfig> turn_servers;
-
-    webrtc::PeerConnectionInterface::IceServer stun_server;
-    stun_server.uri = "stun:stun.l.google.com:19302";
-    stun_server.uri = "stun:192.168.100.4:3478";
-    config.servers.push_back(stun_server);
-
-    for (const auto& server : config.servers) {
-        if (server.uri.find("stun:") == 0) {
-            std::string host_port = server.uri.substr(5);
-            size_t colon_pos = host_port.find(':');
-            if (colon_pos != std::string::npos) {
-                std::string host = host_port.substr(0, colon_pos);
-                int port = std::stoi(host_port.substr(colon_pos + 1));
-                stun_servers.insert(rtc::SocketAddress(host, port));
-            }
-        } else if (server.uri.find("turn:") == 0) {
-            std::string host_port = server.uri.substr(5);
-            size_t colon_pos = host_port.find(':');
-            if (colon_pos != std::string::npos) {
-                cricket::RelayServerConfig turn_config;
-                turn_config.credentials = cricket::RelayCredentials(server.username, server.password);
-                turn_config.ports.push_back(cricket::ProtocolAddress(
-                    rtc::SocketAddress(
-                        host_port.substr(0, colon_pos),
-                        std::stoi(host_port.substr(colon_pos + 1))),
-                    cricket::PROTO_UDP));
-                turn_servers.push_back(turn_config);
-            }
-        }
-    }
-
-    RTC_LOG(LS_INFO) << "Configured STUN/TURN servers:";
-    for (const auto& addr : stun_servers) {
-        RTC_LOG(LS_INFO) << "  STUN Server: " << addr.ToString();
-    }
-    for (const auto& turn : turn_servers) {
-        for (const auto& addr : turn.ports) {
-            RTC_LOG(LS_INFO) << "  TURN Server: " << addr.address.ToString()
-                             << " (Protocol: " << addr.proto << ")";
-        }
-    }
-
-    auto port_allocator = std::make_unique<cricket::BasicPortAllocator>(
-        network_manager_.get(), socket_factory_.get());
-    RTC_DCHECK(port_allocator.get());    
-
-    port_allocator->SetConfiguration(
-        stun_servers,
-        turn_servers,
-        0,  // Keep this as 0
-        webrtc::PeerConnectionInterface::ContinualGatheringPolicy::GATHER_ONCE,
-        nullptr,
-        std::nullopt
-    );
-
-    // Allow flexible port allocation for UDP
-    uint32_t flags = cricket::PORTALLOCATOR_ENABLE_SHARED_SOCKET;
-    port_allocator->set_flags(flags);
-    port_allocator->set_step_delay(cricket::kMinimumStepDelay);  // Speed up gathering
-    port_allocator->set_candidate_filter(cricket::CF_ALL);  // Allow all candidate types
-
-    webrtc::PeerConnectionDependencies pc_dependencies(this);
-    pc_dependencies.allocator = std::move(port_allocator);
-
-    auto pcf_result = peer_connection_factory_->CreatePeerConnectionOrError(
-        config, std::move(pc_dependencies));
-    RTC_DCHECK(pcf_result.ok());    
-    peer_connection_ = pcf_result.MoveValue();
-    RTC_LOG(LS_INFO) << "PeerConnection created successfully.";
-
-    if (is_caller_) {
-        cricket::AudioOptions audio_options;
-        // audio_options.echo_cancellation = true;
-        // audio_options.noise_suppression = true;
-        // audio_options.auto_gain_control = true;
-
-        auto audio_source = peer_connection_factory_->CreateAudioSource(audio_options);
-        RTC_DCHECK(audio_source.get());
-        auto audio_track = peer_connection_factory_->CreateAudioTrack("a", audio_source.get());
-        RTC_DCHECK(audio_track.get());
-
-        webrtc::RtpTransceiverInit init;
-        init.direction = webrtc::RtpTransceiverDirection::kSendRecv;
-        auto at_result = peer_connection_->AddTransceiver(audio_track, init);
-        RTC_DCHECK(at_result.ok());
-        auto transceiver = at_result.value();
-
-        // Force the direction immediately after creation
-        auto direction_result = transceiver->SetDirectionWithError(webrtc::RtpTransceiverDirection::kSendRecv);
-        RTC_LOG(LS_INFO) << "Initial transceiver direction set: " << 
-            (direction_result.ok() ? "success" : "failed");
-    
-        webrtc::PeerConnectionInterface::RTCOfferAnswerOptions offer_options;
-
-        // Store observer in a member variable to keep it alive
-        create_session_observer_ = rtc::make_ref_counted<LambdaCreateSessionDescriptionObserver>(
-            [this](std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
-                std::string sdp;
-                desc->ToString(&sdp);
-                
-                // Store observer in a member variable to keep it alive
-                set_local_description_observer_ = rtc::make_ref_counted<LambdaSetLocalDescriptionObserver>(
-                    [this, sdp](webrtc::RTCError error) {
-                        if (!error.ok()) {
-                            RTC_LOG(LS_ERROR) << "Failed to set local description: " 
-                                            << error.message();
-                            signaling_thread()->PostTask([this]() {
-                                SendMessage("BYE");
-                            });
-                            return;
-                        }
-                        RTC_LOG(LS_INFO) << "Local description set successfully";
-                        SendMessage("OFFER:" + sdp);
-                    });
-
-                peer_connection_->SetLocalDescription(std::move(desc), set_local_description_observer_);
+            deps.task_queue_factory.reset(webrtc::CreateDefaultTaskQueueFactory().release());
+            audio_device_module_ = deps.worker_thread->BlockingCall([&]() -> rtc::scoped_refptr<webrtc::AudioDeviceModule> {
+                auto adm = webrtc::AudioDeviceModule::Create(
+                    webrtc::AudioDeviceModule::kSpeechAudio, 
+                    deps.task_queue_factory.get()
+                    );
+                if (adm) {
+                    RTC_LOG(LS_INFO) << "Audio device module created successfully";                
+                }
+                return adm;
             });
 
-        peer_connection_->CreateOffer(create_session_observer_.get(), offer_options);
- 
-     } else {
-        RTC_LOG(LS_INFO) << "Waiting for offer...";
-        SendMessage("WAITING");
-    }
- 
-  });
+            if (!audio_device_module_) {
+                RTC_LOG(LS_ERROR) << "Failed to create audio device module";
+                return;
+            }
+        }
+#endif
 
+        peer_connection_factory_ = webrtc::CreatePeerConnectionFactory(
+            deps.network_thread,
+            deps.worker_thread,
+            deps.signaling_thread,
+            audio_device_module_, 
+            webrtc::CreateBuiltinAudioEncoderFactory(),
+            webrtc::CreateBuiltinAudioDecoderFactory(),
+            opts_.video ? std::make_unique<webrtc::VideoEncoderFactoryTemplate<
+                webrtc::LibvpxVp8EncoderTemplateAdapter,
+                webrtc::LibvpxVp9EncoderTemplateAdapter,
+                webrtc::OpenH264EncoderTemplateAdapter,
+                webrtc::LibaomAv1EncoderTemplateAdapter>>() : nullptr,
+            opts_.video ? std::make_unique<webrtc::VideoDecoderFactoryTemplate<
+                webrtc::LibvpxVp8DecoderTemplateAdapter,
+                webrtc::LibvpxVp9DecoderTemplateAdapter,
+                webrtc::OpenH264DecoderTemplateAdapter,
+                webrtc::Dav1dDecoderTemplateAdapter>>() : nullptr,
+            nullptr, nullptr);
+
+        webrtc::PeerConnectionInterface::RTCConfiguration config;
+        config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
+        if (opts_.encryption) {
+            RTC_LOG(LS_INFO) << "Encryption is enabled!";
+            config.certificates.push_back(certificate);  // Use the loaded certificate
+        } else {
+            // WARNING! FOLLOWING CODE IS FOR DEBUG ONLY!
+            webrtc::PeerConnectionFactory::Options options = {};
+            options.disable_encryption = true;
+            peer_connection_factory_->SetOptions(options);
+            // END OF WARNING
+        }
+
+        config.type = webrtc::PeerConnectionInterface::IceTransportsType::kAll;
+        config.rtcp_mux_policy = webrtc::PeerConnectionInterface::kRtcpMuxPolicyRequire;
+        config.enable_ice_renomination = false;
+        config.ice_candidate_pool_size = 0;
+        config.continual_gathering_policy = 
+            webrtc::PeerConnectionInterface::ContinualGatheringPolicy::GATHER_ONCE;
+        config.ice_connection_receiving_timeout = 1000;
+        config.ice_backup_candidate_pair_ping_interval = 2000;
+
+        cricket::ServerAddresses stun_servers;
+        std::vector<cricket::RelayServerConfig> turn_servers;
+
+        webrtc::PeerConnectionInterface::IceServer stun_server;
+        stun_server.uri = "stun:stun.l.google.com:19302";
+        stun_server.uri = "stun:192.168.100.4:3478";
+        config.servers.push_back(stun_server);
+
+        for (const auto& server : config.servers) {
+            if (server.uri.find("stun:") == 0) {
+                std::string host_port = server.uri.substr(5);
+                size_t colon_pos = host_port.find(':');
+                if (colon_pos != std::string::npos) {
+                    std::string host = host_port.substr(0, colon_pos);
+                    int port = std::stoi(host_port.substr(colon_pos + 1));
+                    stun_servers.insert(rtc::SocketAddress(host, port));
+                }
+            } else if (server.uri.find("turn:") == 0) {
+                std::string host_port = server.uri.substr(5);
+                size_t colon_pos = host_port.find(':');
+                if (colon_pos != std::string::npos) {
+                    cricket::RelayServerConfig turn_config;
+                    turn_config.credentials = cricket::RelayCredentials(server.username, server.password);
+                    turn_config.ports.push_back(cricket::ProtocolAddress(
+                        rtc::SocketAddress(
+                            host_port.substr(0, colon_pos),
+                            std::stoi(host_port.substr(colon_pos + 1))),
+                        cricket::PROTO_UDP));
+                    turn_servers.push_back(turn_config);
+                }
+            }
+        }
+
+        RTC_LOG(LS_INFO) << "Configured STUN/TURN servers:";
+        for (const auto& addr : stun_servers) {
+            RTC_LOG(LS_INFO) << "  STUN Server: " << addr.ToString();
+        }
+        for (const auto& turn : turn_servers) {
+            for (const auto& addr : turn.ports) {
+                RTC_LOG(LS_INFO) << "  TURN Server: " << addr.address.ToString()
+                                 << " (Protocol: " << addr.proto << ")";
+            }
+        }
+
+        auto port_allocator = std::make_unique<cricket::BasicPortAllocator>(
+            network_manager_.get(), socket_factory_.get());
+        RTC_DCHECK(port_allocator.get());    
+
+        port_allocator->SetConfiguration(
+            stun_servers,
+            turn_servers,
+            0,  // Keep this as 0
+            webrtc::PeerConnectionInterface::ContinualGatheringPolicy::GATHER_ONCE,
+            nullptr,
+            std::nullopt
+        );
+
+        // Allow flexible port allocation for UDP
+        uint32_t flags = cricket::PORTALLOCATOR_ENABLE_SHARED_SOCKET;
+        port_allocator->set_flags(flags);
+        port_allocator->set_step_delay(cricket::kMinimumStepDelay);  // Speed up gathering
+        port_allocator->set_candidate_filter(cricket::CF_ALL);  // Allow all candidate types
+
+        webrtc::PeerConnectionDependencies pc_dependencies(this);
+        pc_dependencies.allocator = std::move(port_allocator);
+
+        auto pcf_result = peer_connection_factory_->CreatePeerConnectionOrError(
+            config, std::move(pc_dependencies));
+        RTC_DCHECK(pcf_result.ok());    
+        peer_connection_ = pcf_result.MoveValue();
+        RTC_LOG(LS_INFO) << "PeerConnection created successfully.";
+
+        if (is_caller()) {
+            cricket::AudioOptions audio_options;
+            // audio_options.echo_cancellation = true;
+            // audio_options.noise_suppression = true;
+            // audio_options.auto_gain_control = true;
+
+            auto audio_source = peer_connection_factory_->CreateAudioSource(audio_options);
+            RTC_DCHECK(audio_source.get());
+            auto audio_track = peer_connection_factory_->CreateAudioTrack("a", audio_source.get());
+            RTC_DCHECK(audio_track.get());
+
+            webrtc::RtpTransceiverInit init;
+            init.direction = webrtc::RtpTransceiverDirection::kSendRecv;
+            auto at_result = peer_connection_->AddTransceiver(audio_track, init);
+            RTC_DCHECK(at_result.ok());
+            auto transceiver = at_result.value();
+
+            // Force the direction immediately after creation
+            auto direction_result = transceiver->SetDirectionWithError(webrtc::RtpTransceiverDirection::kSendRecv);
+            RTC_LOG(LS_INFO) << "Initial transceiver direction set: " << 
+                (direction_result.ok() ? "success" : "failed");
+        
+            webrtc::PeerConnectionInterface::RTCOfferAnswerOptions offer_options;
+
+            // Store observer in a member variable to keep it alive
+            create_session_observer_ = rtc::make_ref_counted<LambdaCreateSessionDescriptionObserver>(
+                [this](std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
+                    std::string sdp;
+                    desc->ToString(&sdp);
+                    
+                    // Store observer in a member variable to keep it alive
+                    set_local_description_observer_ = rtc::make_ref_counted<LambdaSetLocalDescriptionObserver>(
+                        [this, sdp](webrtc::RTCError error) {
+                            if (!error.ok()) {
+                                RTC_LOG(LS_ERROR) << "Failed to set local description: " 
+                                                << error.message();
+                                signaling_thread()->PostTask([this]() {
+                                    SendMessage("BYE");
+                                });
+                                return;
+                            }
+                            RTC_LOG(LS_INFO) << "Local description set successfully";
+                            SendMessage("OFFER:" + sdp);
+                        });
+
+                    peer_connection_->SetLocalDescription(std::move(desc), set_local_description_observer_);
+                });
+
+            peer_connection_->CreateOffer(create_session_observer_.get(), offer_options);
+     
+         } else {
+            RTC_LOG(LS_INFO) << "Waiting for offer...";
+            SendMessage("WAITING");
+        }
+     
+      });
 }
 
 void DirectPeer::HandleMessage(rtc::AsyncPacketSocket* socket,
                              const std::string& message,
                              const rtc::SocketAddress& remote_addr) {
-
-   if (message.find("INIT") == 0) {
+    if (message == "RESTART" || message == "BYE") {
         if (!is_caller()) {
-          Start();
-        } else {
-          RTC_LOG(LS_ERROR) << "Peer is not a callee, cannot init";
+            RTC_LOG(LS_INFO) << "Restarting callee for new connections...";
+            signaling_thread()->PostTask([this]() {
+                // Clean up existing connection
+                Shutdown();
+                
+                // Reset any connection state
+                pending_ice_candidates_.clear();
+                ice_candidates_sent_ = 0;
+                ice_candidates_received_ = 0;
+                sdp_fragments_sent_ = 0;
+                sdp_fragments_received_ = 0;
+                
+                // Start fresh
+                Start();
+                SendMessage("WAITING");
+            });
         }
-
-   } else if (message == "WAITING") {
+    } else if (message == "WAITING") {
         if (is_caller()) {
-          Start();
-        } else {
-          RTC_LOG(LS_ERROR) << "Peer is not a caller, cannot wait";
+            // For caller, start new connection attempt
+            signaling_thread()->PostTask([this]() {
+                Shutdown();
+                Start();
+            });
         }
-   } else if (!is_caller() && message.find("OFFER:") == 0) {
+    } else if (!is_caller() && message.find("OFFER:") == 0) {
       std::string sdp = message.substr(6);  // Use exact length of "OFFER:"
       if(!sdp.empty()) {
         SetRemoteDescription(sdp);
@@ -333,7 +365,8 @@ void DirectPeer::OnRenegotiationNeeded() {
 }
 
 void DirectPeer::OnIceConnectionChange(webrtc::PeerConnectionInterface::IceConnectionState new_state) {
-    // Implementation will go here
+    RTC_LOG(LS_INFO) << "ICE connection state changed to: " << new_state;
+    // Don't trigger disconnect here - socket disconnection will handle it
 }
 
 void DirectPeer::OnIceGatheringChange(webrtc::PeerConnectionInterface::IceGatheringState new_state) {
@@ -383,10 +416,10 @@ void DirectPeer::SetRemoteDescription(const std::string& sdp) {
   
     signaling_thread()->PostTask([this, sdp]() {
         RTC_LOG(LS_INFO) << "Processing remote description as " 
-                        << (is_caller_ ? "ANSWER" : "OFFER");
+                        << (is_caller() ? "ANSWER" : "OFFER");
         
         webrtc::SdpParseError error;
-        webrtc::SdpType sdp_type = is_caller_ ? webrtc::SdpType::kAnswer 
+        webrtc::SdpType sdp_type = is_caller() ? webrtc::SdpType::kAnswer 
                                              : webrtc::SdpType::kOffer;
         
         std::unique_ptr<webrtc::SessionDescriptionInterface> session_description =
@@ -477,3 +510,65 @@ void DirectPeer::AddIceCandidate(const std::string& candidate_sdp) {
     });
 }
 
+void DirectPeer::HandleDisconnect() {
+    // Ensure we're on the signaling thread for WebRTC cleanup
+    if (!signaling_thread()->IsCurrent()) {
+        signaling_thread()->PostTask([this]() {
+            HandleDisconnect();
+        });
+        return;
+    }
+
+    // Prevent re-entrance
+    bool expected = false;
+    if (!handling_disconnect_.compare_exchange_strong(expected, true)) {
+        RTC_LOG(LS_INFO) << "Already handling peer disconnect, skipping";
+        return;
+    }
+
+    RTC_LOG(LS_INFO) << (is_caller() ? "Caller" : "Callee") << " handling peer disconnect...";
+    
+    // First clean up WebRTC
+    if (peer_connection_) {
+        peer_connection_->Close();
+        peer_connection_ = nullptr;
+    }
+    peer_connection_factory_ = nullptr;
+    
+    // Reset WebRTC state
+    pending_ice_candidates_.clear();
+    ice_candidates_sent_ = 0;
+    ice_candidates_received_ = 0;
+    sdp_fragments_sent_ = 0;
+    sdp_fragments_received_ = 0;
+
+    // Reset disconnect flag
+    handling_disconnect_ = false;
+    
+    // Let base class handle socket cleanup and reconnection
+    network_thread()->PostTask([this]() {
+        DirectApplication::HandleDisconnect();
+        
+        // Only attempt reconnection for caller
+        if (is_caller() && tcp_socket_) {
+            // Don't start WebRTC until we get WELCOME
+            SendMessage("HELLO");
+        }
+    });
+}
+
+bool DirectPeer::RestartConnection() {
+    // First let base class handle socket reconnection
+    if (!DirectApplication::RestartConnection()) {
+        return false;
+    }
+
+    // Reset WebRTC state
+    pending_ice_candidates_.clear();
+    ice_candidates_sent_ = 0;
+    ice_candidates_received_ = 0;
+    sdp_fragments_sent_ = 0;
+    sdp_fragments_received_ = 0;
+
+    return true;
+}

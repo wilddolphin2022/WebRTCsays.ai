@@ -15,7 +15,7 @@
 #include "utils.h"
 
 // DirectApplication Implementation
-DirectApplication::DirectApplication() {
+DirectApplication::DirectApplication(Options opts) : opts_(opts) {
   pss_ = std::make_unique<rtc::PhysicalSocketServer>();
 
   main_thread_ = rtc::Thread::CreateWithSocketServer();
@@ -91,9 +91,22 @@ bool DirectApplication::Initialize() {
   return true;
 }
 
+bool DirectApplication::CheckConnection(rtc::AsyncPacketSocket* socket) {
+  if (!socket ||
+      socket->GetState() != rtc::AsyncPacketSocket::STATE_CONNECTED) {
+    HandleDisconnect();
+    return false;
+  }
+  return true;
+}
+
 void DirectApplication::HandleMessage(rtc::AsyncPacketSocket* socket,
                                       const std::string& message,
                                       const rtc::SocketAddress& remote_addr) {
+  if (!CheckConnection(socket)) {
+    return;
+  }
+
   if (message.find("ICE:") == 0) {
     ice_candidates_received_++;
     SendMessage("ICE_ACK:" + std::to_string(ice_candidates_received_));
@@ -127,74 +140,68 @@ void DirectApplication::HandleMessage(rtc::AsyncPacketSocket* socket,
 }
 
 bool DirectApplication::SendMessage(const std::string& message) {
-  if (!tcp_socket_) {
-    RTC_LOG(LS_ERROR) << "Cannot send message, socket is null";
+  if (!CheckConnection(tcp_socket_.get())) {
     return false;
   }
-  RTC_LOG(LS_INFO) << "Sending message: " << message;
+
   size_t sent = tcp_socket_->Send(message.c_str(), message.length(),
                                   rtc::PacketOptions());
   if (sent <= 0) {
-    RTC_LOG(LS_ERROR) << "Failed to send message, error: " << errno;
+    HandleDisconnect();
     return false;
   }
-  RTC_LOG(LS_INFO) << "Successfully sent " << sent << " bytes";
+
   return true;
 }
 
+bool DirectApplication::RestartConnection() {
+  // Base implementation for restarting network connection
+  if (tcp_socket_) {
+    tcp_socket_->Close();
+    tcp_socket_ = nullptr;
+  }
+
+  return InitializeSocket();
+}
+
 int main(int argc, char* argv[]) {
-  Options opts = parseOptions(argc, argv);
+    Options opts = parseOptions(argc, argv);
 
-  if (argc==1||opts.help) {
-    std::string usage = opts.help_string;
-    RTC_LOG(LS_ERROR) << usage;
-    return 1;
-  }
-
-  RTC_LOG(LS_INFO) << getUsage(opts);
-
-  std::string ip = "127.0.0.1";
-  int port = 3456;
-
-  if (!ParseIpAndPort(opts.address, ip, port)) {
-    RTC_LOG(LS_ERROR) << "address:port combo is invalid";
-    return 1;
-  }
-
-  rtc::InitializeSSL();
-
-  if (opts.mode == "caller") {
-    DirectCaller caller(rtc::SocketAddress(ip, port), opts.encryption);
-    if (!caller.Initialize()) {
-      RTC_LOG(LS_ERROR) << "failed to initialize caller";
-      return 1;
+    if (argc == 1 || opts.help) {
+        std::string usage = opts.help_string;
+        RTC_LOG(LS_ERROR) << usage;
+        return 1;
     }
-    if (!caller.Connect()) {
-      RTC_LOG(LS_ERROR) << "failed to connect";
-      return 1;
-    }
-    caller.Run();
-  } else if (opts.mode == "callee") {
-    DirectCallee callee(port, opts.encryption);
-    if(opts.whisper) {
-      callee.SetEnableWhisper(opts.whisper);
-      callee.SetWhisperModel(opts.whisper_model);
-      callee.SetLlamaModel(opts.llama_model);
-    }
-    if (!callee.Initialize()) {
-      RTC_LOG(LS_ERROR) << "Failed to initialize callee";
-      return 1;
-    }
-    if (!callee.StartListening()) {
-      RTC_LOG(LS_ERROR) << "Failed to start listening";
-      return 1;
-    }
-    callee.Run();
-  } else {
-    RTC_LOG(LS_ERROR) << "Invalid mode: " << opts.mode;
-    return 1;
-  }
 
-  rtc::CleanupSSL();  // Changed from rtc::CleanupSSL()
-  return 0;
+    RTC_LOG(LS_INFO) << getUsage(opts);
+
+    rtc::InitializeSSL();
+
+    int ret = 0;
+    if (opts.is_caller) {
+        DirectCaller caller(opts);
+        if (!caller.Initialize()) {
+            RTC_LOG(LS_ERROR) << "failed to initialize caller";
+            ret = 1;
+        } else if (!caller.Connect()) {
+            RTC_LOG(LS_ERROR) << "failed to connect";
+            ret = 1;
+        } else {
+            caller.Run();
+        }
+    } else {
+        DirectCallee callee(opts);
+        if (!callee.Initialize()) {
+            RTC_LOG(LS_ERROR) << "Failed to initialize callee";
+            ret = 1;
+        } else if (!callee.StartListening()) {
+            RTC_LOG(LS_ERROR) << "Failed to start listening";
+            ret = 1;
+        } else {
+            callee.Run();
+        }
+    }
+
+    rtc::CleanupSSL();
+    return ret;
 }

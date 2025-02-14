@@ -25,8 +25,12 @@ bool ParseIpAndPort(const std::string& ip_port, std::string& ip, int& port) {
     }
 
     ip = ip_port.substr(0, colon_pos);
+    if(ip.empty()) ip = "127.0.0.1";
     std::string port_str = ip_port.substr(colon_pos + 1);
-    port = std::stoi(port_str);
+    if(port_str.empty()) 
+        port_str =  std::to_string(port);
+    else      
+        port = std::stoi(port_str);
 
     if (port < 0 || port > 65535) {
         RTC_LOG(LS_ERROR) << "Invalid port: " << port;
@@ -112,7 +116,7 @@ Options parseOptions(int argc, char* argv[]) {
     // Initialize defaults
     opts.encryption = false;
     opts.whisper = false;
-    opts.mode = "";
+    opts.is_caller = false;
     opts.webrtc_cert_path = "cert.pem";
     opts.webrtc_key_path = "key.pem";
     opts.webrtc_speech_initial_playout_wav = "play.wav";
@@ -144,7 +148,11 @@ Options parseOptions(int argc, char* argv[]) {
 
         // Handle parameters with values
         if (arg.find("--mode=") == 0) {
-            opts.mode = arg.substr(7);
+            std::string mode = arg.substr(7);
+            if(mode == "caller")
+                opts.is_caller = true;
+            else if(mode == "callee")
+                opts.is_caller = false;
         } else if (arg == "--encryption") {
             opts.encryption = true;
         } else if (arg == "--whisper") {
@@ -181,12 +189,20 @@ Options parseOptions(int argc, char* argv[]) {
         else if (arg == "--no-whisper") {
             opts.whisper = false;
         } 
+        else if (arg == "--video") {
+            opts.video = true;
+        }
+        else if (arg == "--no-video") {
+            opts.video = false;
+        }
         // Handle address in any position
         else if (isAddress(arg)) {
-            opts.address = arg;
-            // Only guess mode if not explicitly set
-            if (opts.mode.empty()) {
-                opts.mode = (arg.find('.') == std::string::npos) ? "callee" : "caller";
+            std::string address = arg;
+            opts.ip = "127.0.0.1";
+            opts.port = 3456;
+            if (!ParseIpAndPort(address, opts.ip, opts.port)) {
+                RTC_LOG(LS_ERROR) << "address:port combo is invalid";
+
             }
         }
     }
@@ -219,15 +235,16 @@ Options parseOptions(int argc, char* argv[]) {
 std::string getUsage(const Options opts) {
   std::stringstream usage;
 
-  usage << "\nMode: " << opts.mode << "\n";
+  usage << "\nMode: " << (opts.is_caller ? "caller" : "callee") << "\n"; 
   usage << "Encryption: " << (opts.encryption ? "enabled" : "disabled") << "\n";
   usage << "Whisper: " << (opts.whisper ? "enabled" : "disabled") << "\n";
+  usage << "Video: " << (opts.video ? "enabled" : "disabled") << "\n";
   usage << "Whisper Model: " << opts.whisper_model << "\n";
   usage << "Llama Model: " << opts.llama_model << "\n";
   usage << "WebRTC Cert Path: " << opts.webrtc_cert_path << "\n";
   usage << "WebRTC Key Path: " << opts.webrtc_key_path << "\n";
   usage << "WebRTC Speech Initial Playout WAV: " << opts.webrtc_speech_initial_playout_wav << "\n";
-  usage << "IP Address: " << opts.address << "\n";
-
+  usage << "IP Address: " << opts.ip << "\n";
+  usage << "Port: " << opts.port << "\n";
   return usage.str();
 }

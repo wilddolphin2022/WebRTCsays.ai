@@ -11,17 +11,10 @@
  */
 
 #include "direct.h"
-
+#include "utils.h"
 // DirectCaller Implementation
-DirectCaller::DirectCaller(
-    const rtc::SocketAddress& remote_addr,
-    const bool enable_encryption,
-    const bool enable_video,
-    const bool enable_whisper
-    )
-    : 
-    DirectPeer(true, enable_encryption, enable_video, enable_whisper),
-    remote_addr_(remote_addr) {}
+DirectCaller::DirectCaller(Options opts)
+    : DirectPeer(opts) {}
 
 DirectCaller::~DirectCaller() {
     if (tcp_socket_) {
@@ -56,10 +49,13 @@ bool DirectCaller::Connect() {
         struct sockaddr_in remote_addr;
         memset(&remote_addr, 0, sizeof(remote_addr));
         remote_addr.sin_family = AF_INET;
-        remote_addr.sin_port = htons(remote_addr_.port());
-        inet_pton(AF_INET, remote_addr_.ipaddr().ToString().c_str(), &remote_addr.sin_addr);
+        remote_addr.sin_port = htons(opts_.port);
+        inet_pton(AF_INET, opts_.ip.c_str(), &remote_addr.sin_addr);
 
-        RTC_LOG(LS_INFO) << "Attempting to connect to " << remote_addr_.ToString();
+        // Store remote address for later use
+        remote_addr_ = rtc::SocketAddress(opts_.ip, opts_.port);
+
+        RTC_LOG(LS_INFO) << "Attempting to connect to " << remote_addr_.ToString(); 
 
         // Connect
         if (::connect(raw_socket, (struct sockaddr*)&remote_addr, sizeof(remote_addr)) < 0) {
@@ -78,43 +74,46 @@ bool DirectCaller::Connect() {
             return false;
         }
 
-        tcp_socket_.reset(new rtc::AsyncTCPSocket(wrapped_socket));
-        tcp_socket_->RegisterReceivedPacketCallback(
-            [this](rtc::AsyncPacketSocket* socket, const rtc::ReceivedPacket& packet) {
-                OnMessage(socket, packet.payload().data(), packet.payload().size(), 
-                         packet.source_address());
-            });
+        tcp_socket_ = std::make_unique<rtc::AsyncTCPSocket>(wrapped_socket);
+        SetupSocket(tcp_socket_.get());
+        
         OnConnect(tcp_socket_.get());
-
         return true;
     };
     return network_thread()->BlockingCall(std::move(task));
 }
 
 void DirectCaller::OnConnect(rtc::AsyncPacketSocket* socket) {
+    // Now remote_addr_ will be properly set
     RTC_LOG(LS_INFO) << "Connected to " << remote_addr_.ToString();
     
     // Start the message sequence
-    SendMessage("HELLO");
+    network_thread()->PostTask([this]() {
+        SendMessage("HELLO");
+    });
 }
 
 void DirectCaller::OnMessage(rtc::AsyncPacketSocket* socket,
                            const unsigned char* data,
                            size_t len,
                            const rtc::SocketAddress& remote_addr) {
-    std::string message((const char*)data, len);
-    RTC_LOG(LS_INFO) << "Caller received: " << message;
+  if(!CheckConnection(socket)) {
+    return;
+  }
 
-    if (message == "WELCOME") {
-       SendMessage("INIT");
-    } 
-    if (message == "WAITING") {
-        Start();
-    } 
-    else if (message == "OK") {
-        Shutdown();
-        QuitThreads();
-    } else {
-        HandleMessage(socket, message, remote_addr);
-    }
+  std::string message((const char*)data, len);
+  RTC_LOG(LS_INFO) << "Caller received: " << message;
+
+  if (message == "WELCOME") {
+      SendMessage("INIT");
+  } 
+  else if (message == "WAITING") {
+      Start();
+  } 
+  else if (message == "OK") {
+      Shutdown();
+      QuitThreads();
+  } else {
+      HandleMessage(socket, message, remote_addr);
+  }
 }

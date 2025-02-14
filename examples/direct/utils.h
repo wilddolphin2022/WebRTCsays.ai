@@ -49,14 +49,12 @@ rtc::scoped_refptr<rtc::RTCCertificate> LoadCertificate(const std::string& cert_
 // Function to load certificate from environment variables or fall back to CreateCertificate
 rtc::scoped_refptr<rtc::RTCCertificate> LoadCertificateFromEnv();
 
-// Function to speak a string
-void speakString(const std::string& s);
-
 // Command line options
 struct Options {
-    std::string mode = "caller"; // default to caller if not specified
+    bool is_caller = false; 
     bool encryption = true;
     bool whisper = true;
+    bool video = false;
     bool help = false;
     std::string help_string;
     std::string whisper_model;
@@ -64,7 +62,8 @@ struct Options {
     std::string webrtc_cert_path = "cert.pem";
     std::string webrtc_key_path = "key.pem";
     std::string webrtc_speech_initial_playout_wav = "play.wav";
-    std::string address = "127.0.0.1:3456";
+    std::string ip = "127.0.0.1";
+    int port = 3456;
 };
 
 // Function to parse command line string to above options
