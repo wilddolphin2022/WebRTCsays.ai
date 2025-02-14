@@ -14,21 +14,14 @@ usage()
 clean()
 {
     # Remove all possible artifact directories.
-    cd ${WEBRTC_SRC_DIR}/modules/third_party/whisper.cpp
-    echo "rm -rf build in modules/third_party/whisper.cpp"
+    cd ${WEBRTC_SRC_DIR}/modules/third_party/whillats
+    echo "rm -rf build in modules/third_party/whillats"
     rm -rf build
-    cd ${WEBRTC_SRC_DIR}/modules/third_party/llama.cpp
-    echo "rm -rf build in modules/third_party/llama.cpp "
-    rm -rf build
-    cd ${WEBRTC_SRC_DIR}/modules/third_party/espeak-ng
-    echo "rm -rf build in modules/third_party/espeak-ng"
-    rm -rf build
-    cd ${WEBRTC_SRC_DIR}/modules/third_party/pcaudiolib
-    echo "make clean in modules/third_party/pcaudiolib"
-    make clean
 }
 
 WEBRTC_SRC_DIR="${PWD}/../src"
+WHILLATS_DIR="${WEBRTC_SRC_DIR}/third_party//whillats"
+WHILLATS_THIRD_PARTY_DIR="${WHILLATS_DIR}/third_party"
 
 case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
     linux)
@@ -72,28 +65,28 @@ done
 
     echo "HOST_PLATFORM is ${HOST_PLATFORM}, BUILD_TYPE is ${BUILD_TYPE}, WEBRTC_SRC_DIR is ${WEBRTC_SRC_DIR}"
 
-    cd ${WEBRTC_SRC_DIR}/modules/third_party
-    if [ ! -f ${WEBRTC_SRC_DIR}/modules/third_party/whisper.cpp/CMakeLists.txt ]; then
+    cd ${WHILLATS_THIRD_PARTY_DIR}
+    if [ ! -f ${WHILLATS_THIRD_PARTY_DIR}/whisper.cpp/CMakeLists.txt ]; then
     echo "cloning whisper.cpp to ${PWD}"
     git clone https://github.com/ggerganov/whisper.cpp
     fi
 
-    if [ ! -f ${WEBRTC_SRC_DIR}/modules/third_party/llama.cpp/CMakeLists.txt ]; then
+    if [ ! -f ${WHILLATS_THIRD_PARTY_DIR}/llama.cpp/CMakeLists.txt ]; then
     echo "cloning llama.cpp to ${PWD}"
     git clone https://github.com/ggerganov/llama.cpp
     fi
 
-    if [ ! -f ${WEBRTC_SRC_DIR}/modules/third_party/espeak-ng/CMakeLists.txt ]; then
+    if [ ! -f ${WHILLATS_THIRD_PARTY_DIR}/espeak-ng/CMakeLists.txt ]; then
     echo "cloning espeak-ng to ${PWD}"
     git clone https://github.com/espeak-ng/espeak-ng
     fi
 
-    if [ ! -f ${WEBRTC_SRC_DIR}/modules/third_party/pcaudiolib/Makefile.am ]; then
+    if [ ! -f ${WHILLATS_THIRD_PARTY_DIR}/pcaudiolib/Makefile.am ]; then
     echo "cloning pcaudiolib to ${PWD}"
     git clone https://github.com/espeak-ng/pcaudiolib
     fi
 
-    cd ${WEBRTC_SRC_DIR}/modules/third_party/whisper.cpp
+    cd ${WHILLATS_THIRD_PARTY_DIR}/whisper.cpp
     
     if [ "${HOST_PLATFORM}" = "linux" ]
     then
@@ -116,7 +109,7 @@ done
         cd build; sudo make install; cd ..
     fi
 
-    cd ${WEBRTC_SRC_DIR}/modules/third_party/llama.cpp
+    cd ${WHILLATS_THIRD_PARTY_DIR}/llama.cpp
 
     if [ "${HOST_PLATFORM}" = "linux" ]
     then
@@ -139,7 +132,7 @@ done
         cd build; sudo make install; cd ..
     fi
 
-    cd ${WEBRTC_SRC_DIR}/modules/third_party/espeak-ng
+    cd ${WHILLATS_THIRD_PARTY_DIR}/espeak-ng
 
     echo "building espeak-ng"
 
@@ -159,7 +152,7 @@ done
 
     echo "building pcaudio"
 
-    cd ${WEBRTC_SRC_DIR}/modules/third_party/pcaudiolib
+    cd ${WHILLATS_THIRD_PARTY_DIR}/pcaudiolib
 
     if [ "${HOST_PLATFORM}" = "mac" ]
     then
@@ -167,10 +160,5 @@ done
         ./autogen.sh
         ./configure
         make
-        ./libtool --mode=install cp src/libpcaudio.la  ${WEBRTC_SRC_DIR}/modules/third_party/pcaudiolib/src/libpcaudio.dylib
-    fi
-
-    if [ ! -f ${WEBRTC_SRC_DIR}/cert.pem ]; then
-    echo "creating certtificate in ${PWD}"
-        openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 3650 -nodes -subj "/C=XX/ST=StateName/L=CityName/O=CompanyName/OU=CompanySectionName/CN=CommonNameOrHostname"
+        ./libtool --mode=install cp src/libpcaudio.la  ${WHILLATS_THIRD_PARTY_DIR}/pcaudiolib/src/libpcaudio.dylib
     fi

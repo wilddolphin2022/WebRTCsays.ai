@@ -26,12 +26,7 @@
 #include "rtc_base/time_utils.h"
 
 #include "speech_audio_device.h"
-
-struct whisper_context;
-
-#include "llama_device_base.h"  // Whisper Audio base
-#include "whisper_transcriber.h"  // Whisper Transcriber
-#include "espeak_tts.h" // Epeak-ng tts
+#include "whillats.h" // whillats project - Whisper, Llama, Espeak TTS
 
 namespace webrtc {
 
@@ -138,6 +133,8 @@ class WhisperAudioDevice : public SpeechAudioDevice {
 
   void OnDataReady(const std::vector<short>& audioData);
 
+  void SetTTSBuffer(const uint16_t* buffer, size_t buffer_size);
+
  private:
   bool RecThreadProcess();
   bool PlayThreadProcess();
@@ -168,19 +165,20 @@ class WhisperAudioDevice : public SpeechAudioDevice {
   std::string _whisperModelFilename;
   std::string _llamaModelFilename;
   std::string _wavFilename;
+  std::string _llama_model;
 
   FileWrapper _recFile;
   FileWrapper _playFile;
   
-  std::unique_ptr<WhisperTranscriber> _whisper_transcriber; 
-  std::unique_ptr<LlamaDeviceBase> _llama_device; 
-  std::unique_ptr<ESpeakTTS> _tts;
+  std::unique_ptr<WhillatsTranscriber> _whisper_transcriber; 
+  std::unique_ptr<WhillatsLlama> _llama_device; 
+  std::unique_ptr<WhillatsTTS> _tts;
 
   std::queue<std::string> _textQueue;
   std::mutex _queueMutex;
   std::condition_variable _queueCondition;
   
-  std::vector<short> _ttsBuffer;  // Instance member to hold TTS audio
+  std::vector<uint16_t> _ttsBuffer;  // Instance member to hold TTS audio
   size_t _ttsIndex = 0;  // Instance member to track buffer index
 
   std::mutex audio_buffer_mutex;
