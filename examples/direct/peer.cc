@@ -88,6 +88,9 @@ void DirectPeer::Start() {
         if(opts_.whisper) {
             RTC_LOG(LS_INFO) << "whisper is enabled!";
 
+            webrtc::SpeechAudioDeviceFactory::SetWhisperModelFilename(opts_.whisper_model);
+            webrtc::SpeechAudioDeviceFactory::SetLlamaModelFilename(opts_.llama_model);
+
             deps.task_queue_factory.reset(webrtc::CreateDefaultTaskQueueFactory().release());
             audio_device_module_ = deps.worker_thread->BlockingCall([&]() -> rtc::scoped_refptr<webrtc::AudioDeviceModule> {
                 auto adm = webrtc::AudioDeviceModule::Create(

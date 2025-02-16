@@ -29,6 +29,8 @@ namespace webrtc {
 class SpeechAudioDeviceFactory {
  public:
   static AudioDeviceGeneric* CreateSpeechAudioDevice(TaskQueueFactory* task_queue_factory);
+  static void SetWhisperModelFilename(absl::string_view whisper_model_filename);
+  static void SetLlamaModelFilename(absl::string_view llama_model_filename);
 
  private:
   enum : uint32_t { MAX_FILENAME_LEN = 512 };

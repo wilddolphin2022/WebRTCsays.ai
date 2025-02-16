@@ -28,22 +28,34 @@ std::string SpeechAudioDeviceFactory::_whisperModelFilename;
 std::string SpeechAudioDeviceFactory::_llamaModelFilename;
 std::string SpeechAudioDeviceFactory::_wavFilename;
 
+void SpeechAudioDeviceFactory::SetWhisperModelFilename(absl::string_view whisper_model_filename) {
+  _whisperModelFilename = whisper_model_filename;
+}
+
+void SpeechAudioDeviceFactory::SetLlamaModelFilename(absl::string_view llama_model_filename) {
+  _llamaModelFilename = llama_model_filename;
+}
+
 AudioDeviceGeneric* SpeechAudioDeviceFactory::CreateSpeechAudioDevice(TaskQueueFactory* task_queue_factory) {
 
   WhisperAudioDevice* whisper_audio_device = nullptr;
   if(!whisper_audio_device) {
 
-    SpeechAudioDeviceFactory::_whisperModelFilename = std::getenv("WHISPER_MODEL") ? \
-      std::getenv("WHISPER_MODEL") : ""; // Must be ggml
-    if(SpeechAudioDeviceFactory::_whisperModelFilename.empty())
-      RTC_LOG(LS_WARNING)
-        << "WHISPER_MODEL enviroment variable is empty! Did you mean it?";
-        
-    SpeechAudioDeviceFactory::_llamaModelFilename = std::getenv("LLAMA_MODEL") ? \
-      std::getenv("LLAMA_MODEL") : ""; // Must be gguf
-    if(SpeechAudioDeviceFactory::_llamaModelFilename.empty())
-      RTC_LOG(LS_WARNING)
-        << "LLAMA_MODEL enviroment variable is empty! Did you mean it?";
+    if(_whisperModelFilename.empty()) {
+      SpeechAudioDeviceFactory::_whisperModelFilename = std::getenv("WHISPER_MODEL") ? \
+        std::getenv("WHISPER_MODEL") : ""; // Must be ggml
+      if(SpeechAudioDeviceFactory::_whisperModelFilename.empty())
+        RTC_LOG(LS_WARNING)
+          << "WHISPER_MODEL enviroment variable is empty! Did you mean it?";
+    }
+
+    if(_llamaModelFilename.empty()) {
+      SpeechAudioDeviceFactory::_llamaModelFilename = std::getenv("LLAMA_MODEL") ? \
+        std::getenv("LLAMA_MODEL") : ""; // Must be gguf
+      if(SpeechAudioDeviceFactory::_llamaModelFilename.empty())
+        RTC_LOG(LS_WARNING)
+          << "LLAMA_MODEL enviroment variable is empty! Did you mean it?";
+    }
 
     SpeechAudioDeviceFactory::_wavFilename = std::getenv("WEBRTC_SPEECH_INITIAL_PLAYOUT_WAV") ? \
       std::getenv("WEBRTC_SPEECH_INITIAL_PLAYOUT_WAV") : ""; // Must be .wav
