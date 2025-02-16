@@ -17,7 +17,8 @@
 DirectPeer::DirectPeer(Options opts) : DirectApplication(opts), 
     peer_connection_(nullptr), 
     network_manager_(std::make_unique<rtc::BasicNetworkManager>(pss())),
-    socket_factory_(std::make_unique<rtc::BasicPacketSocketFactory>(pss()))
+    socket_factory_(std::make_unique<rtc::BasicPacketSocketFactory>(pss())),
+    certificate_(nullptr)
 {
 }
 
@@ -50,25 +51,24 @@ void DirectPeer::Shutdown() {
     
     // Don't reset network_manager_ and socket_factory_ here
     // They are needed for reconnection
+    certificate_ = nullptr;  // Clear certificate reference
 }
 
 void DirectPeer::Start() {
     signaling_thread()->PostTask([this]() {
-        // Load certificate first if encryption is enabled
-        rtc::scoped_refptr<rtc::RTCCertificate> certificate;
-        if (opts_.encryption) {
-            certificate = LoadCertificateFromEnv();
-            if (!certificate) {
-                RTC_LOG(LS_ERROR) << "Failed to load certificate for encryption";
-                network_thread()->PostTask([this]() {
-                    SendMessage("BYE");
-                    if (tcp_socket_) {
-                        tcp_socket_->Close();
-                    }
-                });
-                return;
-            }
-            RTC_LOG(LS_INFO) << "Certificate loaded successfully";
+        // First clean up any existing connection
+        if (peer_connection_) {
+            peer_connection_->Close();
+            peer_connection_ = nullptr;
+        }
+        peer_connection_factory_ = nullptr;
+
+        // Create/get certificate if needed
+        if (opts_.encryption && !certificate_) {
+            certificate_ = LoadCertificateFromEnv();
+            std::string fingerprint;
+            certificate_->GetSSLCertificate().GetSignatureDigestAlgorithm(&fingerprint);
+            RTC_LOG(LS_INFO) << "Using certificate with fingerprint: " << fingerprint;
         }
 
         // Recreate network manager and socket factory if needed
@@ -133,7 +133,7 @@ void DirectPeer::Start() {
         config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
         if (opts_.encryption) {
             RTC_LOG(LS_INFO) << "Encryption is enabled!";
-            config.certificates.push_back(certificate);  // Use the loaded certificate
+            config.certificates.push_back(certificate_);
         } else {
             // WARNING! FOLLOWING CODE IS FOR DEBUG ONLY!
             webrtc::PeerConnectionFactory::Options options = {};
@@ -214,6 +214,7 @@ void DirectPeer::Start() {
         port_allocator->set_step_delay(cricket::kMinimumStepDelay);  // Speed up gathering
         port_allocator->set_candidate_filter(cricket::CF_ALL);  // Allow all candidate types
 
+        // Create peer connection with proper dependencies
         webrtc::PeerConnectionDependencies pc_dependencies(this);
         pc_dependencies.allocator = std::move(port_allocator);
 
@@ -221,64 +222,49 @@ void DirectPeer::Start() {
             config, std::move(pc_dependencies));
         RTC_DCHECK(pcf_result.ok());    
         peer_connection_ = pcf_result.MoveValue();
+
         RTC_LOG(LS_INFO) << "PeerConnection created successfully.";
 
+        // Add audio transceiver
+        cricket::AudioOptions audio_options;
+        auto audio_source = peer_connection_factory_->CreateAudioSource(audio_options);
+        auto audio_track = peer_connection_factory_->CreateAudioTrack("a", audio_source.get());
+
+        webrtc::RtpTransceiverInit init;
+        init.direction = webrtc::RtpTransceiverDirection::kSendRecv;
+        auto result = peer_connection_->AddTransceiver(audio_track, init);
+        if (!result.ok()) {
+            RTC_LOG(LS_ERROR) << "Failed to add audio transceiver";
+            return;
+        }
+
+        // Only create offer for caller
         if (is_caller()) {
-            cricket::AudioOptions audio_options;
-            // audio_options.echo_cancellation = true;
-            // audio_options.noise_suppression = true;
-            // audio_options.auto_gain_control = true;
-
-            auto audio_source = peer_connection_factory_->CreateAudioSource(audio_options);
-            RTC_DCHECK(audio_source.get());
-            auto audio_track = peer_connection_factory_->CreateAudioTrack("a", audio_source.get());
-            RTC_DCHECK(audio_track.get());
-
-            webrtc::RtpTransceiverInit init;
-            init.direction = webrtc::RtpTransceiverDirection::kSendRecv;
-            auto at_result = peer_connection_->AddTransceiver(audio_track, init);
-            RTC_DCHECK(at_result.ok());
-            auto transceiver = at_result.value();
-
-            // Force the direction immediately after creation
-            auto direction_result = transceiver->SetDirectionWithError(webrtc::RtpTransceiverDirection::kSendRecv);
-            RTC_LOG(LS_INFO) << "Initial transceiver direction set: " << 
-                (direction_result.ok() ? "success" : "failed");
-        
-            webrtc::PeerConnectionInterface::RTCOfferAnswerOptions offer_options;
-
-            // Store observer in a member variable to keep it alive
+            webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
+            
             create_session_observer_ = rtc::make_ref_counted<LambdaCreateSessionDescriptionObserver>(
                 [this](std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
                     std::string sdp;
                     desc->ToString(&sdp);
                     
-                    // Store observer in a member variable to keep it alive
                     set_local_description_observer_ = rtc::make_ref_counted<LambdaSetLocalDescriptionObserver>(
                         [this, sdp](webrtc::RTCError error) {
                             if (!error.ok()) {
                                 RTC_LOG(LS_ERROR) << "Failed to set local description: " 
                                                 << error.message();
-                                signaling_thread()->PostTask([this]() {
-                                    SendMessage("BYE");
-                                });
                                 return;
                             }
                             RTC_LOG(LS_INFO) << "Local description set successfully";
                             SendMessage("OFFER:" + sdp);
-                        });
+                    });
 
-                    peer_connection_->SetLocalDescription(std::move(desc), set_local_description_observer_);
-                });
+                    peer_connection_->SetLocalDescription(std::move(desc), 
+                                                       set_local_description_observer_);
+            });
 
-            peer_connection_->CreateOffer(create_session_observer_.get(), offer_options);
-     
-         } else {
-            RTC_LOG(LS_INFO) << "Waiting for offer...";
-            SendMessage("WAITING");
+            peer_connection_->CreateOffer(create_session_observer_.get(), options);
         }
-     
-      });
+    });
 }
 
 void DirectPeer::HandleMessage(rtc::AsyncPacketSocket* socket,

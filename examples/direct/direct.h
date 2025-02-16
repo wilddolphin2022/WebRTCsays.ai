@@ -371,6 +371,7 @@ private:
     rtc::scoped_refptr<LambdaCreateSessionDescriptionObserver> create_session_observer_;
     rtc::scoped_refptr<LambdaSetLocalDescriptionObserver> set_local_description_observer_;
     rtc::scoped_refptr<LambdaSetRemoteDescriptionObserver> set_remote_description_observer_;    
+    rtc::scoped_refptr<rtc::RTCCertificate> certificate_;  // Store certificate
 };
 
 class DirectCallee : public DirectPeer,
