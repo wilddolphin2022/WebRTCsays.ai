@@ -37,18 +37,6 @@
 #include "rtc_base/ref_counted_object.h"
 #include "rtc_base/rtc_certificate_generator.h"
 
-// Function to parse IP address and port from a string in the format "IP:PORT"
-bool ParseIpAndPort(const std::string& ip_port, std::string& ip, int& port);
-
-// Function to create a self-signed certificate
-rtc::scoped_refptr<rtc::RTCCertificate> CreateCertificate();
-
-// Function to load a certificate from PEM files
-rtc::scoped_refptr<rtc::RTCCertificate> LoadCertificate(const std::string& cert_path, const std::string& key_path);
-
-// Function to load certificate from environment variables or fall back to CreateCertificate
-rtc::scoped_refptr<rtc::RTCCertificate> LoadCertificateFromEnv();
-
 // Command line options
 struct Options {
     bool is_caller = false; 
@@ -71,3 +59,16 @@ Options parseOptions(int argc, char* argv[]);
 
 // Function to get command line options to a string, to print or speak
 std::string getUsage(const Options opts);
+
+// Function to parse IP address and port from a string in the format "IP:PORT"
+bool ParseIpAndPort(const std::string& ip_port, std::string& ip, int& port);
+
+// Function to create a self-signed certificate
+rtc::scoped_refptr<rtc::RTCCertificate> CreateCertificate();
+
+// Function to load a certificate from PEM files
+rtc::scoped_refptr<rtc::RTCCertificate> LoadCertificate(const std::string& cert_path, const std::string& key_path);
+
+// Function to load certificate from environment variables or fall back to CreateCertificate
+rtc::scoped_refptr<rtc::RTCCertificate> LoadCertificateFromEnv(Options opts);
+

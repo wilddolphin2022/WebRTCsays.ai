@@ -91,10 +91,10 @@ rtc::scoped_refptr<rtc::RTCCertificate> LoadCertificate(const std::string& cert_
 }
 
 // Function to load certificate from environment variables or fall back to CreateCertificate
-rtc::scoped_refptr<rtc::RTCCertificate> LoadCertificateFromEnv() {
+rtc::scoped_refptr<rtc::RTCCertificate> LoadCertificateFromEnv(Options opts) {
   // Get paths from environment variables
-  const char* cert_path = std::getenv("WEBRTC_CERT_PATH");
-  const char* key_path = std::getenv("WEBRTC_KEY_PATH");
+  const char* cert_path = opts.webrtc_cert_path.empty() ? std::getenv("WEBRTC_CERT_PATH") : opts.webrtc_cert_path.c_str();
+  const char* key_path = opts.webrtc_key_path.empty() ? std::getenv("WEBRTC_KEY_PATH") : opts.webrtc_key_path.c_str();
 
   if (cert_path && key_path) {
     RTC_LOG(LS_INFO) << "Loading certificate from " << cert_path << " and " << key_path;

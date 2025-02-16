@@ -65,7 +65,7 @@ void DirectPeer::Start() {
 
         // Create/get certificate if needed
         if (opts_.encryption && !certificate_) {
-            certificate_ = LoadCertificateFromEnv();
+            certificate_ = LoadCertificateFromEnv(opts_);
             std::string fingerprint;
             certificate_->GetSSLCertificate().GetSignatureDigestAlgorithm(&fingerprint);
             RTC_LOG(LS_INFO) << "Using certificate with fingerprint: " << fingerprint;
@@ -225,44 +225,59 @@ void DirectPeer::Start() {
 
         RTC_LOG(LS_INFO) << "PeerConnection created successfully.";
 
-        // Add audio transceiver
-        cricket::AudioOptions audio_options;
-        auto audio_source = peer_connection_factory_->CreateAudioSource(audio_options);
-        auto audio_track = peer_connection_factory_->CreateAudioTrack("a", audio_source.get());
-
-        webrtc::RtpTransceiverInit init;
-        init.direction = webrtc::RtpTransceiverDirection::kSendRecv;
-        auto result = peer_connection_->AddTransceiver(audio_track, init);
-        if (!result.ok()) {
-            RTC_LOG(LS_ERROR) << "Failed to add audio transceiver";
-            return;
-        }
-
-        // Only create offer for caller
         if (is_caller()) {
-            webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
-            
+            cricket::AudioOptions audio_options;
+            // audio_options.echo_cancellation = true;
+            // audio_options.noise_suppression = true;
+            // audio_options.auto_gain_control = true;
+
+            auto audio_source = peer_connection_factory_->CreateAudioSource(audio_options);
+            RTC_DCHECK(audio_source.get());
+            auto audio_track = peer_connection_factory_->CreateAudioTrack("a", audio_source.get());
+            RTC_DCHECK(audio_track.get());
+
+            webrtc::RtpTransceiverInit init;
+            init.direction = webrtc::RtpTransceiverDirection::kSendRecv;
+            auto at_result = peer_connection_->AddTransceiver(audio_track, init);
+            RTC_DCHECK(at_result.ok());
+            auto transceiver = at_result.value();
+
+            // Force the direction immediately after creation
+            auto direction_result = transceiver->SetDirectionWithError(webrtc::RtpTransceiverDirection::kSendRecv);
+            RTC_LOG(LS_INFO) << "Initial transceiver direction set: " << 
+                (direction_result.ok() ? "success" : "failed");
+        
+            webrtc::PeerConnectionInterface::RTCOfferAnswerOptions offer_options;
+
+            // Store observer in a member variable to keep it alive
             create_session_observer_ = rtc::make_ref_counted<LambdaCreateSessionDescriptionObserver>(
                 [this](std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
                     std::string sdp;
                     desc->ToString(&sdp);
                     
+                    // Store observer in a member variable to keep it alive
                     set_local_description_observer_ = rtc::make_ref_counted<LambdaSetLocalDescriptionObserver>(
                         [this, sdp](webrtc::RTCError error) {
                             if (!error.ok()) {
                                 RTC_LOG(LS_ERROR) << "Failed to set local description: " 
                                                 << error.message();
+                                // signaling_thread()->PostTask([this]() {
+                                //     SendMessage("BYE");
+                                // });
                                 return;
                             }
                             RTC_LOG(LS_INFO) << "Local description set successfully";
                             SendMessage("OFFER:" + sdp);
-                    });
+                        });
 
-                    peer_connection_->SetLocalDescription(std::move(desc), 
-                                                       set_local_description_observer_);
-            });
+                    peer_connection_->SetLocalDescription(std::move(desc), set_local_description_observer_);
+                });
 
-            peer_connection_->CreateOffer(create_session_observer_.get(), options);
+            peer_connection_->CreateOffer(create_session_observer_.get(), offer_options);
+     
+         } else {
+            RTC_LOG(LS_INFO) << "Waiting for offer...";
+            SendMessage("WAITING");
         }
     });
 }
