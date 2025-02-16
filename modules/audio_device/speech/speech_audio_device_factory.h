@@ -28,9 +28,10 @@ namespace webrtc {
 // intended for test tools which use the audio device module.
 class SpeechAudioDeviceFactory {
  public:
-  static AudioDeviceGeneric* CreateSpeechAudioDevice(TaskQueueFactory* task_queue_factory);
+  static AudioDeviceGeneric* CreateSpeechAudioDevice();
   static void SetWhisperModelFilename(absl::string_view whisper_model_filename);
   static void SetLlamaModelFilename(absl::string_view llama_model_filename);
+  static void SetTaskQueueFactory(TaskQueueFactory* task_queue_factory);
 
  private:
   enum : uint32_t { MAX_FILENAME_LEN = 512 };
@@ -41,6 +42,7 @@ class SpeechAudioDeviceFactory {
   static std::string _llamaModelFilename;
   // This is a wav file, 16k samples, 16 bit PCM, to play out on beginning
   static std::string _wavFilename;
+  static TaskQueueFactory* _taskQueueFactory;
 };
 
 }  // namespace webrtc

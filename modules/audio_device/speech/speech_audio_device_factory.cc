@@ -27,6 +27,7 @@ namespace webrtc {
 std::string SpeechAudioDeviceFactory::_whisperModelFilename;
 std::string SpeechAudioDeviceFactory::_llamaModelFilename;
 std::string SpeechAudioDeviceFactory::_wavFilename;
+TaskQueueFactory* SpeechAudioDeviceFactory::_taskQueueFactory;
 
 void SpeechAudioDeviceFactory::SetWhisperModelFilename(absl::string_view whisper_model_filename) {
   _whisperModelFilename = whisper_model_filename;
@@ -36,7 +37,11 @@ void SpeechAudioDeviceFactory::SetLlamaModelFilename(absl::string_view llama_mod
   _llamaModelFilename = llama_model_filename;
 }
 
-AudioDeviceGeneric* SpeechAudioDeviceFactory::CreateSpeechAudioDevice(TaskQueueFactory* task_queue_factory) {
+void SpeechAudioDeviceFactory::SetTaskQueueFactory(TaskQueueFactory* task_queue_factory) {
+  _taskQueueFactory = task_queue_factory;
+}
+
+AudioDeviceGeneric* SpeechAudioDeviceFactory::CreateSpeechAudioDevice() {
 
   WhisperAudioDevice* whisper_audio_device = nullptr;
   if(!whisper_audio_device) {
@@ -63,7 +68,7 @@ AudioDeviceGeneric* SpeechAudioDeviceFactory::CreateSpeechAudioDevice(TaskQueueF
       RTC_LOG(LS_INFO)
         << "WEBRTC_SPEECH_INITIAL_PLAYOUT_WAV is '" << SpeechAudioDeviceFactory::_wavFilename << "'";
 
-    whisper_audio_device = new WhisperAudioDevice(task_queue_factory, 
+    whisper_audio_device = new WhisperAudioDevice(_taskQueueFactory, 
                                                    _whisperModelFilename, 
                                                    _llamaModelFilename, 
                                                    _wavFilename);
