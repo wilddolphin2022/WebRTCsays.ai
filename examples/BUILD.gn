@@ -752,6 +752,7 @@ if (is_linux || is_chromeos || is_win) {
         "peerconnection/client/linux/main.cc",
         "peerconnection/client/linux/main_wnd.cc",
         "peerconnection/client/linux/main_wnd.h",
+        "fake_whillats.cc",
       ]
       cflags = [ "-Wno-deprecated-declarations" ]
       libs = [
@@ -817,7 +818,7 @@ if (is_linux || is_chromeos || is_win) {
   }
   rtc_executable("turnserver") {
     testonly = true
-    sources = [ "turnserver/turnserver_main.cc" ]
+    sources = [ "turnserver/turnserver_main.cc", "fake_whillats.cc" ]
     deps = [
       ":read_auth_file",
       "../p2p:basic_packet_socket_factory",

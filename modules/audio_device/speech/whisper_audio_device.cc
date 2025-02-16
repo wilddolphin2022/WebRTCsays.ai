@@ -316,7 +316,7 @@ bool WhisperAudioDevice::RecThreadProcess() {
       _tts->queueText(textToSpeak.c_str());
     }
 
-    // Handle audio buffer independently
+    // Handle audio buffer independently    
     if (!_ttsBuffer.empty()) {
       // Add bounds checking
       if (_ttsIndex >= _ttsBuffer.size()) {
