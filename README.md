@@ -110,3 +110,14 @@ openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 3
 ./out/debug/direct --mode=caller 127.0.0.1:3456 --whisper --encryption
 
 ```
+
+```
+### Some real life direct use with AI
+```bash
+
+# Calling DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf LLM (2GB in size)
+
+./out/debug/direct --mode=callee --encryption --webrtc_cert_path=cert.pem --webrtc_key_path=key.pem --whisper --whisper_model=models/ggml-base.bin --llama --llama_model=models/DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf :3456
+./out/debug/direct --mode=caller --encryption --webrtc_cert_path=cert.pem --webrtc_key_path=key.pem 192.168.100.7:3456
+
+```
