@@ -576,3 +576,14 @@ bool DirectPeer::RestartConnection() {
 
     return true;
 }
+
+void DirectPeer::OnSocketClose(rtc::AsyncPacketSocket* socket, int err) {
+    RTC_LOG(LS_INFO) << "Socket closed with error: " << err;
+    // Don't immediately disconnect for URL connections
+    if (!opts_.is_url) {
+        HandleDisconnect();
+    } else {
+        RTC_LOG(LS_INFO) << "URL connection socket closed, attempting reconnect...";
+        // TODO: Implement reconnection logic for URL connections
+    }
+}

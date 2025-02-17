@@ -17,26 +17,72 @@ extern "C" { void __libc_csu_init() {} void __libc_csu_fini() {} }
 #endif
 
 // Function to parse IP address and port from a string in the format "IP:PORT"
-bool ParseIpAndPort(const std::string& ip_port, std::string& ip, int& port) {
-    size_t colon_pos = ip_port.find(':');
-    if (colon_pos == std::string::npos) {
-        RTC_LOG(LS_ERROR) << "Invalid IP:PORT format: " << ip_port;
+bool ParseIpAndPort(std::string& input, Options& opts) {
+    
+    // Check if it's a URL
+    if (input.find("http://") == 0) {
+        input = input.substr(7);
+        opts.is_url = true;
+    } else if (input.find("https://") == 0) {
+        input = input.substr(8);
+        opts.port = 443;  // Default HTTPS port
+        opts.is_url = true;
+    }
+
+    // If it's a URL, handle path and query parameters
+    if (opts.is_url && opts.room.empty()) {
+        size_t slash_pos = input.find('/');
+        if (slash_pos != std::string::npos) {
+            std::string path = input.substr(slash_pos);
+            input = input.substr(0, slash_pos);
+            
+            // Parse room ID from query parameters
+            size_t room_pos = path.find("roomId=");
+            if (room_pos != std::string::npos) {
+                opts.room = path.substr(room_pos + 7);  // Skip "roomId="
+                size_t end_pos = opts.room.find('&');
+                if (end_pos != std::string::npos) {
+                    opts.room = opts.room.substr(0, end_pos);
+                }
+            }
+        }
+    }
+
+    // Extract host and port
+    size_t colon_pos = input.find(':');
+    if (colon_pos != std::string::npos) {
+        opts.ip = input.substr(0, colon_pos);
+        std::string port_str = input.substr(colon_pos + 1);
+        if (!port_str.empty()) {
+            char* end;
+            long port_val = strtol(port_str.c_str(), &end, 10);
+            if (*end != '\0' || port_val < 0 || port_val > 65535) {
+                RTC_LOG(LS_ERROR) << "Invalid port number: " << port_str;
+                return false;
+            }
+            opts.port = static_cast<int>(port_val);
+        }
+    } else {
+        opts.ip = input;
+        // Keep existing port if it's a URL with port 443, otherwise use default
+        if (!opts.is_url) {
+            opts.port = 3456;  // Default port for non-URL connections
+        }
+    }
+
+    // Clean up hostname
+    if (opts.ip.empty()) {
+        opts.ip = "127.0.0.1";
+    }
+
+    // Validate port
+    if (opts.port < 0 || opts.port > 65535) {
+        RTC_LOG(LS_ERROR) << "Invalid port: " << opts.port;
         return false;
     }
 
-    ip = ip_port.substr(0, colon_pos);
-    if(ip.empty()) ip = "127.0.0.1";
-    std::string port_str = ip_port.substr(colon_pos + 1);
-    if(port_str.empty()) 
-        port_str =  std::to_string(port);
-    else      
-        port = std::stoi(port_str);
-
-    if (port < 0 || port > 65535) {
-        RTC_LOG(LS_ERROR) << "Invalid port: " << port;
-        return false;
-    }
-
+    RTC_LOG(LS_INFO) << "Parsed address - IP: " << opts.ip << ", Port: " << opts.port  
+                     << (opts.is_url ? " (URL)" : " (Direct)");
     return true;
 }
 
@@ -173,6 +219,9 @@ Options parseOptions(int argc, char* argv[]) {
         else if (arg.find("--webrtc_speech_initial_playout_wav=") == 0) {
             opts.webrtc_speech_initial_playout_wav = arg.substr(36);
         }
+        else if (arg.find("--room=") == 0) {
+            opts.room = arg.substr(7);
+        }
         // Handle flags
         else if (arg == "--help") {
             opts.help = true;
@@ -200,7 +249,7 @@ Options parseOptions(int argc, char* argv[]) {
             std::string address = arg;
             opts.ip = "127.0.0.1";
             opts.port = 3456;
-            if (!ParseIpAndPort(address, opts.ip, opts.port)) {
+            if (!ParseIpAndPort(address, opts)) {
                 RTC_LOG(LS_ERROR) << "address:port combo is invalid";
 
             }
@@ -246,5 +295,6 @@ std::string getUsage(const Options opts) {
   usage << "WebRTC Speech Initial Playout WAV: " << opts.webrtc_speech_initial_playout_wav << "\n";
   usage << "IP Address: " << opts.ip << "\n";
   usage << "Port: " << opts.port << "\n";
+  usage << "Room: " << opts.room << "\n";
   return usage.str();
 }

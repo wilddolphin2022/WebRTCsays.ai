@@ -962,11 +962,13 @@ if (!build_with_chromium) {
       "../rtc_base:stringutils",
       "../rtc_base:threading",
       "../rtc_base/third_party/sigslot",
+      "../rtc_base:rtc_json",
       "../system_wrappers:field_trial",
       "../test:field_trial",
       "../test:platform_video_capturer",
       "../test:rtp_test_utils",
       "//third_party/abseil-cpp/absl/memory",
+      "//third_party/jsoncpp",
     ]
  
     # WebRTCsays.ai stuff

@@ -18,6 +18,18 @@
 #include <future>
 #include <optional>
 
+#include "rtc_base/stream.h"  // For StreamInterface
+#include "rtc_base/socket_server.h"
+#include "rtc_base/thread.h"
+#include "rtc_base/physical_socket_server.h"
+#include "rtc_base/ssl_adapter.h"
+#include "rtc_base/logging.h"
+#include "rtc_base/ssl_identity.h"
+#include "rtc_base/openssl_identity.h"
+#include "rtc_base/ref_counted_object.h"
+#include "rtc_base/openssl_stream_adapter.h"
+#include "rtc_base/buffer_queue.h"
+
 #include "rtc_base/async_tcp_socket.h"
 #include "rtc_base/socket_address.h"
 #include "rtc_base/thread.h"
@@ -112,7 +124,7 @@ class LambdaSetRemoteDescriptionObserver
   std::function<void(webrtc::RTCError)> on_complete_;
 };
 
-
+// Base class for all applications
 class DirectApplication {
 public:
     DirectApplication(Options opts);
@@ -144,10 +156,10 @@ protected:
 
     void QuitThreads() {
         should_quit_ = true;  // Add this member to DirectApplication class
-        if (network_thread_) network_thread_->Quit();
-        if (worker_thread_) worker_thread_->Quit();
-        if (signaling_thread_) signaling_thread_->Quit();
-        if (main_thread_) main_thread_->Quit();
+        if (network_thread()) network_thread()->Quit();
+        if (worker_thread()) worker_thread()->Quit();
+        if (signaling_thread()) signaling_thread()->Quit();
+        if (main_thread()) main_thread()->Quit();
     }
 
     // Common message handling
@@ -200,42 +212,37 @@ protected:
     }
 
     // Add socket close subscription
-    void SetupSocket(rtc::AsyncTCPSocket* socket) {
+    virtual void SetupSocket(rtc::AsyncPacketSocket* socket) {
         if (!socket) return;
         
-        // All socket operations must be on network thread
+        // Ensure we're on network thread
         if (!network_thread()->IsCurrent()) {
             network_thread()->PostTask([this, socket]() {
                 SetupSocket(socket);
             });
             return;
         }
+
+        // Deregister any existing callback first
+        socket->DeregisterReceivedPacketCallback();
         
+        // Register new callback
         socket->RegisterReceivedPacketCallback(
             [this](rtc::AsyncPacketSocket* socket, const rtc::ReceivedPacket& packet) {
-                // Ensure callback is handled on network thread
+                // Ensure callback runs on network thread
                 if (!network_thread()->IsCurrent()) {
                     network_thread()->PostTask([this, socket, packet]() {
-                        this->OnMessage(socket, packet.payload().data(), packet.payload().size(), 
-                                      packet.source_address());
+                        OnMessage(socket, 
+                                reinterpret_cast<const unsigned char*>(packet.payload().data()),
+                                packet.payload().size(),
+                                packet.source_address());
                     });
                     return;
                 }
-                this->OnMessage(socket, packet.payload().data(), packet.payload().size(), 
-                              packet.source_address());
-            });
-
-        socket->SubscribeCloseEvent(
-            this,
-            [this](rtc::AsyncPacketSocket* s, int err) {
-                // Ensure close handling is on network thread
-                if (!network_thread()->IsCurrent()) {
-                    network_thread()->PostTask([this]() {
-                        this->HandleDisconnect();
-                    });
-                    return;
-                }
-                this->HandleDisconnect();
+                OnMessage(socket, 
+                         reinterpret_cast<const unsigned char*>(packet.payload().data()),
+                         packet.payload().size(),
+                         packet.source_address());
             });
     }
 
@@ -317,6 +324,7 @@ private:
     std::unique_ptr<rtc::PhysicalSocketServer> pss_;  
 };
 
+// Peer class inherits from DirectApplication and PeerConnectionObserver
 class DirectPeer : public DirectApplication,
                   public webrtc::PeerConnectionObserver {
 public:
@@ -360,6 +368,32 @@ protected:
     virtual void HandleDisconnect() override;
     virtual bool RestartConnection() override;
 
+    // Add these declarations
+    virtual void OnSocketClose(rtc::AsyncPacketSocket* socket, int err);
+    void SetupSocket(rtc::AsyncPacketSocket* socket) override {
+        // Call base class setup first
+        DirectApplication::SetupSocket(socket);
+        
+        // Ensure we're on network thread
+        if (!network_thread()->IsCurrent()) {
+            network_thread()->PostTask([this, socket]() {
+                if (auto tcp_socket = static_cast<rtc::AsyncTCPSocket*>(socket)) {
+                    if (opts_.is_url) {
+                        tcp_socket->SetOption(rtc::Socket::OPT_KEEPALIVE, 1);
+                    }
+                }
+            });
+            return;
+        }
+
+        // Add URL-specific setup
+        if (auto tcp_socket = static_cast<rtc::AsyncTCPSocket*>(socket)) {
+            if (opts_.is_url) {
+                tcp_socket->SetOption(rtc::Socket::OPT_KEEPALIVE, 1);
+            }
+        }
+    }
+
 private:
     rtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
     rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> peer_connection_factory_;
@@ -374,6 +408,7 @@ private:
     rtc::scoped_refptr<rtc::RTCCertificate> certificate_;  // Store certificate
 };
 
+// Callee needs sigslot::has_slots<> for SignalNewConnection
 class DirectCallee : public DirectPeer,
                     public sigslot::has_slots<> {
 public:
@@ -391,18 +426,17 @@ private:
                   size_t len,
                   const rtc::SocketAddress& remote_addr) override;
 
-    std::unique_ptr<rtc::AsyncTcpListenSocket> listen_socket_;  // Changed to unique_ptr
+    std::unique_ptr<rtc::AsyncTcpListenSocket> listen_socket_;
 };
 
-class DirectCaller : public DirectPeer, 
-                    public sigslot::has_slots<> {
+class DirectCaller : public DirectPeer {
 public:
     explicit DirectCaller(Options opts);
     ~DirectCaller() override;
 
     // Connect and send messages
     bool Connect();
-    //bool SendMessage(const std::string& message);
+    bool SendMessage(const std::string& message) override;
 
 private:
     // Called when data is received on the socket

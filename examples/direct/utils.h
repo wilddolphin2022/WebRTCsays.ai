@@ -39,19 +39,21 @@
 
 // Command line options
 struct Options {
-    bool is_caller = false; 
-    bool encryption = true;
-    bool whisper = true;
-    bool video = false;
     bool help = false;
-    std::string help_string;
+    bool is_caller = false;
+    std::string ip = "127.0.0.1";
+    int port = 3456;
+    bool encryption = true;
+    bool video = false;
+    bool whisper = false;
     std::string whisper_model;
     std::string llama_model;
+    std::string help_string;
     std::string webrtc_cert_path = "cert.pem";
     std::string webrtc_key_path = "key.pem";
     std::string webrtc_speech_initial_playout_wav = "play.wav";
-    std::string ip = "127.0.0.1";
-    int port = 3456;
+    bool is_url = false;  // Flag to indicate URL-based connection
+    std::string room; // Room ID for URL connections
 };
 
 // Function to parse command line string to above options
